@@ -1,0 +1,76 @@
+name: Deploy Release
+
+on:
+  push:
+    tags:
+      - "v*" # Triggers on tags like v1.0.0, v2.1.3, etc.
+
+jobs:
+  build:
+    name: Build Binary (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: audido-linux
+            asset_name: audido-linux-x86_64
+          - os: windows-latest
+            artifact_name: audido-tui.exe
+            asset_name: audido-windows-x64.exe
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux Dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config
+
+      - name: Build Binary
+        run: cargo build --release --bin audido-tui
+
+      - name: Prepare Artifact
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" == "windows-latest" ]; then
+            cp target/release/audido-tui.exe ${{ matrix.asset_name }}
+          else
+            cp target/release/audido-tui ${{ matrix.asset_name }}
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.asset_name }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: false
+          files: ./artifacts/*

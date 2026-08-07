@@ -1,0 +1,20 @@
+[package]
+name = "audido-tui"
+version = "0.1.0"
+edition = "2024"
+description = "A terminal-based audio player with queue management"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+ratatui = "0.30.0"
+audido-core = { path = "../audido-core" }
+crossbeam-channel = "0.5.15"
+tokio = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+tui-logger = "0.18.1"
+strum = { version = "0.27", features = ["derive"] }
+fern = "0.7.1"
+chrono = "0.4.43"
+lazy_static = "1.5.0"

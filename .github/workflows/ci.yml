@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    
+    # If your project is in a subdirectory, uncomment the following block:
+    # defaults:
+    #   run:
+    #     working-directory: ${{ env.WORKING_DIRECTORY }}
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Install System Dependencies
+      run: |
+        sudo apt-get update
+        # libasound2-dev is required for 'rodio' (audio playback) on Linux
+        sudo apt-get install -y libasound2-dev libudev-dev pkg-config
+
+    - name: Set up Rust Toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy, rustfmt
+
+    - name: Cache Cargo Registry & Build
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
+    - name: Check Formatting
+      run: cargo fmt --all -- --check
+
+    - name: Lint with Clippy
+      run: cargo clippy --workspace -- -D warnings
+
+    - name: Build (Debug)
+      run: cargo build --workspace --verbose
+
+    - name: Run Tests
+      run: cargo test --workspace --verbose
+
+    - name: Build (Release)
+      run: cargo build --release --workspace --verbose

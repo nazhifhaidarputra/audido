@@ -73,7 +73,6 @@ cargo run --release -p audido-tui
 ## Configuration & Notes
 
 - The project uses a workspace layout. The main interactive binary lives in the `audido-tui` crate.
-- License: GPL-3.0-or-later (see [LICENSE](LICENSE))
 
 ## Contributors
 

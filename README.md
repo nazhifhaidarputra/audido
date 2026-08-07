@@ -2,7 +2,7 @@
 
 ![crates.io](https://img.shields.io/crates/v/audido-tui.svg)
 ![docs.rs](https://docs.rs/audido-tui/badge.svg)
-![license](https://img.shields.io/badge/license-GPL--3.0-blue.svg)
+![license](https://img.shields.io/badge/license-MIT-blue.svg)
 ![rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)
 
 Audido is a terminal-based audio player (TUI) written in Rust. It provides a local audio player, queue management, and a foundation for DSP-based audio processing.
@@ -93,4 +93,4 @@ Contributions welcome — please open issues or PRs. For large changes, open an 
 
 ## License
 
-This project is licensed under the GNU General Public License v3 (GPL-3.0-or-later) — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT LIcense — see the [LICENSE](LICENSE) file for details.

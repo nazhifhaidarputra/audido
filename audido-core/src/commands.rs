@@ -31,6 +31,7 @@ pub enum CoreEvent {
         index: usize,
         metadata: AudioMetadata,
     },
+    DeviceInvalidated,
     /// A non-fatal error occurred in the audio core
     Error(String),
     /// Engine is shutting down

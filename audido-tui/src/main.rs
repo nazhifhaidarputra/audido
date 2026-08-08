@@ -1,8 +1,12 @@
 use std::fs::canonicalize;
+use std::io::IsTerminal;
+#[cfg(target_os = "linux")]
+use std::process::Command;
 use std::time::Duration;
 use std::{io, path::PathBuf};
 
 use audido_core::browser;
+use audido_core::commands::CoreEvent;
 use ratatui::{
     backend::CrosstermBackend,
     crossterm::{
@@ -28,6 +32,47 @@ use crate::router::InterceptKeyResult;
 use crate::routes::playback::PlaybackRoute;
 
 fn main() -> anyhow::Result<()> {
+    if !std::io::stdout().is_terminal() {
+        let exe = std::env::current_exe()?;
+        let args: Vec<String> = std::env::args().skip(1).collect();
+
+        #[cfg(target_os = "windows")]
+        Command::new("cmd").arg("/c").arg("start").arg("").arg(&exe).args(&args).spawn()?;
+
+        #[cfg(target_os = "macos")]
+        Command::new("open").arg("-a").arg("Terminal").arg(&exe).args(&args).spawn()?;
+
+        #[cfg(target_os = "linux")]
+        {
+            let terminals = [
+                ("kitty", "-e"),
+                ("alacritty", "-e"),
+                ("x-terminal-emulator", "-e"),
+                ("gnome-terminal", "--"),
+                ("konsole", "-e"),
+                ("xfce4-terminal", "-e"),
+                ("mate-terminal", "-e"),
+                ("terminator", "-e"),
+                ("xterm", "-e"),
+            ];
+
+            let mut spawned = false;
+
+            while let Some(&(term, flag)) = terminals.iter().next() {
+                if Command::new(term).arg(flag).arg(&exe).args(&args).spawn().is_ok() {
+                    spawned = true;
+                    break;
+                }
+            }
+
+            if !spawned {
+                anyhow::bail!("Failed to launch any supported Linux terminal emulator.");
+            }
+        }
+
+        // Exit the initial invisible process so the new terminal takes over
+        return Ok(());
+    }
     logger::setup_logging()?;
 
     log::info!("Starting Audido TUI");
@@ -42,7 +87,7 @@ fn main() -> anyhow::Result<()> {
     run_tui(handle, args)
 }
 
-fn run_tui(handle: CoreHandle, initial_files: Vec<String>) -> anyhow::Result<()> {
+fn run_tui(mut handle: CoreHandle, initial_files: Vec<String>) -> anyhow::Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -63,7 +108,17 @@ fn run_tui(handle: CoreHandle, initial_files: Vec<String>) -> anyhow::Result<()>
         // Drain all pending CoreEvents from the broadcast channel
         loop {
             match event_rx.try_recv() {
-                Ok(event) => state.handle_event(event),
+                Ok(event) => {
+                    // Trigger the recovery mechanism when the device invalidates
+                    if matches!(event, CoreEvent::DeviceInvalidated) {
+                        log::info!("Device invalidated event received, attempting host recovery...");
+                        if let Err(e) = audido_core::modules::core::resolve_host(&mut handle) {
+                            log::error!("Host recovery failed: {}", e);
+                        }
+                    }
+                    
+                    state.handle_event(event);
+                },
                 Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
                 Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
                     log::warn!("Core event channel closed");
@@ -151,7 +206,13 @@ fn setup_initial_state(
 
     log::info!("Adding {} files to queue from CLI", files.len());
     // Non-blocking: queue is populated by Tokio background task
-    modules::queue::add_to_queue(handle.ctx(), files);
+    
+    let ctx = handle.ctx();
+    let tokio_handle = handle.ctx().tokio_handle.clone();
+
+    tokio_handle.spawn(async move {
+        modules::queue::add_to_queue(ctx, files).await;
+    });
     state.audio.status_message = "Loading queue...".to_string();
 
     Ok(())

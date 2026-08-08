@@ -172,7 +172,7 @@ pub struct CoreHandle {
     /// Keep runtime alive for the duration of the program.
     _runtime: Arc<tokio::runtime::Runtime>,
     /// Keep CPAL stream alive — dropping it silences output.
-    _cpal_stream: cpal::Stream,
+    pub stream: Option<cpal::Stream>,
 }
 
 impl CoreHandle {
@@ -246,7 +246,7 @@ pub fn init() -> anyhow::Result<CoreHandle> {
     Ok(CoreHandle {
         ctx,
         _runtime: runtime,
-        _cpal_stream: cpal_stream,
+        stream: Some(cpal_stream),
     })
 }
 
@@ -258,7 +258,21 @@ fn build_cpal_stream(
 ) -> anyhow::Result<cpal::Stream> {
     use cpal::SampleFormat;
 
-    let err_fn = |err| log::error!("CPAL stream error: {}", err);
+    let ctx_for_err = Arc::clone(&ctx);
+    let err_fn = move |err| {
+        log::error!("CPAL stream error: {}", err);
+        
+        match err {
+            cpal::StreamError::DeviceNotAvailable => {
+                // Signal the runtime to resolve a new host/device and rebuild the graph.
+                log::warn!("Audio device disconnected or stream invalidated. Triggering host resolution...");
+                ctx_for_err.emit(CoreEvent::DeviceInvalidated);
+            }
+            _ => {
+                // Handle other backend-specific errors if necessary
+            }
+        }
+    };
 
     let stream = match config.sample_format() {
         SampleFormat::F32 => {
@@ -306,6 +320,42 @@ fn build_cpal_stream(
     };
 
     Ok(stream)
+}
+
+pub fn resolve_host(handle: &mut CoreHandle) -> anyhow::Result<()> {
+    log::info!("Resolving new audio host and rebuilding DSP graph...");
+
+    // Safely drop the old invalid stream on the owning thread
+    handle.stream = None;
+
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .context("No default audio output device found during host resolution")?;
+
+    let config = device
+        .default_output_config()
+        .context("Failed to get default output config during host resolution")?;
+
+    let ring = HeapRb::<f32>::new(RING_BUFFER_CAPACITY);
+    let (producer, consumer) = ring.split();
+
+    {
+        let mut ring_lock = handle.ctx.ring_producer.lock().expect("producer poisoned");
+        *ring_lock = producer;
+    }
+    
+    handle.ctx.atomics.device_sample_rate.store(config.sample_rate().0, Ordering::Relaxed);
+
+    let new_stream = build_cpal_stream(&device, &config, consumer, Arc::clone(&handle.ctx))?;
+    new_stream.play().context("Failed to start recovered CPAL stream")?;
+
+    // Hot-swap the new stream into the handle
+    handle.stream = Some(new_stream);
+    
+    log::info!("Successfully rebuilt CPAL stream and DSP graph.");
+    
+    Ok(())
 }
 
 /// Called by the CPAL audio thread to fill each output buffer.

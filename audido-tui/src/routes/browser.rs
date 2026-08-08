@@ -61,13 +61,21 @@ impl RouteHandler for BrowserRoute {
 
                         if *selected == 0 {
                             // Play Now — clear queue, add file, auto-play
-                            modules::queue::clear_queue(ctx.clone());
-                            modules::queue::add_to_queue(ctx, vec![path_str]);
+                            let ctx_clone = ctx.clone();
+                            let path_clone = path_str.clone();
+                            ctx.tokio_handle.spawn(async move {
+                                // Await the operations to prevent the race condition
+                                let _ = modules::queue::clear_queue(ctx_clone.clone()).await;
+                                let _ = modules::queue::add_to_queue(ctx_clone, vec![path_clone]).await;
+                            });
                             state.browser.close_dialog();
                             return Ok(RouteAction::Replace(Box::new(PlaybackRoute)));
                         } else {
                             // Add to Queue only
-                            modules::queue::add_to_queue(ctx, vec![path_str]);
+                            let ctx_clone = ctx.clone();
+                            ctx.tokio_handle.spawn(async move {
+                                modules::queue::add_to_queue(ctx_clone, vec![path_str]).await;
+                            });
                             state.browser.close_dialog();
                         }
                     }

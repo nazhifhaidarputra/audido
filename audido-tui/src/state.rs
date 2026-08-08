@@ -87,6 +87,10 @@ impl AppState {
                 self.audio.status_message =
                     format!("Track {}/{}", index + 1, self.queue.queue.len());
             }
+            CoreEvent::DeviceInvalidated => {
+                self.audio.error_message = Some("Audio device disconnected. Attempting recovery...".to_string());
+                self.audio.status_message = "Reconnecting audio...".to_string();
+            },
         }
     }
 

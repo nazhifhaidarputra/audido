@@ -1,4 +1,7 @@
+use std::fmt::{self, Debug, Display};
+
 use audido_core::metadata::AudioMetadata;
+use ratatui_image::protocol::Protocol;
 
 /// Audio-related state (playback status, position, volume, metadata, messages)
 #[derive(Debug, Clone)]
@@ -17,6 +20,36 @@ pub struct AudioState {
     pub status_message: String,
     /// Error message if any
     pub error_message: Option<String>,
+    pub cover_image_protocol: ImageProtocolWrapper
+}
+
+#[derive(Clone)]
+pub struct ImageProtocolWrapper(Option<Protocol>);
+
+impl Debug for ImageProtocolWrapper {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "[Image Protocol]")
+    }
+}
+
+impl ImageProtocolWrapper {
+    pub fn get(&self) -> Option<&Protocol> {
+        self.0.as_ref()
+    }
+
+    pub fn get_mut(&mut self) -> Option<&mut Protocol> {
+        self.0.as_mut()
+    }
+
+    pub fn new(protocol: Option<Protocol>) -> Self {
+        Self(protocol)
+    }
+}
+
+impl Default for ImageProtocolWrapper {
+    fn default() -> Self {
+        Self(None)
+    }
 }
 
 impl AudioState {
@@ -29,6 +62,7 @@ impl AudioState {
             metadata: None,
             status_message: "No audio loaded. Pass a file path as argument.".to_string(),
             error_message: None,
+            cover_image_protocol: ImageProtocolWrapper::default(),
         }
     }
 

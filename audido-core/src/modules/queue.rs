@@ -115,3 +115,29 @@ pub(crate) fn emit_queue_update(ctx: &CoreContext) {
     };
     ctx.emit(CoreEvent::QueueUpdated(items));
 }
+
+/// Play immediately the selected song.
+/// 1. Stopping the playback
+/// 2. Clears the queue
+/// 3. Add the [path] song to the queue
+pub async fn play_immediately(ctx: Arc<CoreContext>, path: String) {
+    crate::modules::playback::stop_inner(&ctx).await;
+
+    {
+        let mut queue = ctx.queue.lock().expect("queue poisoned");
+        queue.clear();
+    }
+
+    *ctx.current_audio.lock().expect("current_audio poisoned") = None;
+    ctx.atomics.total_samples.store(0, std::sync::atomic::Ordering::Release);
+    ctx.atomics.position_samples.store(0, std::sync::atomic::Ordering::Release);
+
+    {
+        let mut queue = ctx.queue.lock().expect("queue poisoned");
+        queue.add(vec![std::path::PathBuf::from(path)]);
+    }
+
+    emit_queue_update(&ctx);
+    play_queue_index_inner(Arc::clone(&ctx), 0).await;
+    log::info!("Playing track immediately.");
+}

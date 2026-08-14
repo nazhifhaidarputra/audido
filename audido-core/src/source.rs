@@ -233,6 +233,7 @@ impl AudioPlaybackData {
                     metadata.author = tag.artist().map(|s| s.to_string());
                     metadata.album = tag.album().map(|s| s.to_string());
                     metadata.genre = tag.genre().map(|s| s.to_string());
+                    metadata.cover = tag.pictures().first().map(|pic| pic.data().to_vec());
 
                     log::info!(
                         "Metadata loaded: {:?} by {:?}",

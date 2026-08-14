@@ -20,34 +20,28 @@ use crate::{
 // ==============================================
 
 /// Resume or start playback. No-op if already playing.
-pub fn play(ctx: Arc<CoreContext>) {
-    let handle = ctx.tokio_handle.clone();
-    handle.spawn(async move {
-        let has_audio = ctx.current_audio.lock().unwrap().is_some();
-        if !has_audio {
-            ctx.emit(CoreEvent::Error("No audio loaded".into()));
-            return;
-        }
-        if ctx.atomics.is_playing.load(Ordering::Relaxed) {
-            return;
-        }
-        ctx.atomics.is_playing.store(true, Ordering::Release);
-        ctx.emit(CoreEvent::Playing);
-        log::info!("Playback resumed.");
-    });
+pub async fn play(ctx: Arc<CoreContext>) {
+    let has_audio = ctx.current_audio.lock().unwrap().is_some();
+    if !has_audio {
+        ctx.emit(CoreEvent::Error("No audio loaded".into()));
+        return;
+    }
+    if ctx.atomics.is_playing.load(Ordering::Relaxed) {
+        return;
+    }
+    ctx.atomics.is_playing.store(true, Ordering::Release);
+    ctx.emit(CoreEvent::Playing);
+    log::info!("Playback resumed.");
 }
 
 /// Pause playback. No-op if already paused.
-pub fn pause(ctx: Arc<CoreContext>) {
-    let handle = ctx.tokio_handle.clone();
-    handle.spawn(async move {
-        if !ctx.atomics.is_playing.load(Ordering::Relaxed) {
-            return;
-        }
-        ctx.atomics.is_playing.store(false, Ordering::Release);
-        ctx.emit(CoreEvent::Paused);
-        log::info!("Playback paused.");
-    });
+pub async fn pause(ctx: Arc<CoreContext>) {
+    if !ctx.atomics.is_playing.load(Ordering::Relaxed) {
+        return;
+    }
+    ctx.atomics.is_playing.store(false, Ordering::Release);
+    ctx.emit(CoreEvent::Paused);
+    log::info!("Playback paused.");
 }
 
 /// Stop playback and reset position to the beginning.
@@ -90,6 +84,7 @@ pub fn set_speed(ctx: Arc<CoreContext>, speed: f32) {
     ctx.atomics.set_speed(speed.clamp(0.1, 4.0));
 }
 
+
 // ==========================================
 // ============ Internal helpers ============
 // ==========================================
@@ -98,6 +93,7 @@ pub fn set_speed(ctx: Arc<CoreContext>, speed: f32) {
 pub(crate) async fn stop_inner(ctx: &CoreContext) {
     ctx.atomics.is_playing.store(false, Ordering::Release);
     ctx.atomics.position_samples.store(0, Ordering::Release);
+    ctx.atomics.clear_buffer.store(true, Ordering::Release);
     let old_tx = ctx.rt_cmd_tx.lock().unwrap().take();
     if let Some(tx) = old_tx {
         let _ = tx.send(RealtimeCommand::Stop);

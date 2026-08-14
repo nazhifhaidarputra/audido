@@ -28,7 +28,7 @@ use std::sync::{
 use anyhow::Context;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossbeam_channel::Sender;
-use ringbuf::{HeapCons, HeapProd, HeapRb, traits::Split};
+use ringbuf::{HeapCons, HeapProd, HeapRb, traits::{Consumer, Split}};
 use tokio::sync::broadcast;
 
 use crate::{
@@ -55,6 +55,8 @@ const EVENT_BROADCAST_CAPACITY: usize = 256;
 pub struct PlaybackAtomics {
     /// `true` when playback is active (not paused, not stopped).
     pub is_playing: AtomicBool,
+    /// Flag to signal the CPAL thread to drain leftover buffer samples.
+    pub clear_buffer: AtomicBool,
     /// Current playback position in samples (updated by DSP feed loop).
     pub position_samples: AtomicUsize,
     /// Total audio duration in samples (set when track is loaded).
@@ -77,6 +79,7 @@ impl Default for PlaybackAtomics {
     fn default() -> Self {
         Self {
             is_playing: AtomicBool::new(false),
+            clear_buffer: AtomicBool::new(false),
             position_samples: AtomicUsize::new(0),
             total_samples: AtomicUsize::new(0),
             sample_rate: AtomicU32::new(44100),
@@ -106,10 +109,10 @@ impl PlaybackAtomics {
 /// Central shared state for the audio core.  
 /// Wrapped in `Arc<CoreContext>` and passed to every module function and the CPAL thread.
 pub struct CoreContext {
-    // ── Playback atomics (lock-free, shared between UI tasks and CPAL thread) ──
+    // Playback atomics (lock-free, shared between UI tasks and CPAL thread)
     pub atomics: PlaybackAtomics,
 
-    // ── Mutable engine state (behind Mutex — only modified by Tokio tasks) ──
+    // Mutable engine state (behind Mutex — only modified by Tokio tasks)
     pub queue: Mutex<PlaybackQueue>,
     pub current_audio: Mutex<Option<AudioPlaybackData>>,
     pub eq_shadow: Mutex<Equalizer>,
@@ -117,20 +120,20 @@ pub struct CoreContext {
     pub eq_enabled: AtomicBool,
     pub normalizer_enabled: AtomicBool,
 
-    // ── SPSC Ring Buffer Producer (used by DSP feed loop) ──
+    // SPSC Ring Buffer Producer (used by DSP feed loop)
     /// The producer side of the HeapRb; only one DSP task at a time writes to this.
     /// Wrapped in Mutex so it can be taken/replaced when a new track starts.
     pub ring_producer: Mutex<HeapProd<f32>>,
 
-    // ── Real-time command channel (to DSP processing task) ──
+    // Real-time command channel (to DSP processing task)
     /// Sender for [`RealtimeCommand`]s forwarded to the audio processing thread.
     pub rt_cmd_tx: Mutex<Option<Sender<RealtimeCommand>>>,
 
-    // ── Event broadcast ──
+    // Event broadcast
     /// All subscribers receive a clone of each [`CoreEvent`] emitted.
     pub event_tx: broadcast::Sender<CoreEvent>,
 
-    // ── Tokio runtime handle ──
+    // Tokio runtime handle
     /// Background async runtime. All module functions use this to spawn tasks.
     pub tokio_handle: tokio::runtime::Handle,
 }
@@ -185,6 +188,14 @@ impl CoreHandle {
     /// Convenience: arc-clone the context for use in module calls.
     pub fn ctx(&self) -> Arc<CoreContext> {
         Arc::clone(&self.ctx)
+    }
+
+    /// Fire an async command onto the background runtime. Non-blocking.
+    pub fn spawn<F>(&self, fut: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        self.ctx.tokio_handle.spawn(fut);
     }
 }
 
@@ -368,6 +379,11 @@ fn fill_output(
     output: &mut [f32],
     ctx: &CoreContext,
 ) {
+
+    if ctx.atomics.clear_buffer.swap(false, Ordering::Acquire) {
+        while consumer.pop_slice(output) > 0 {}
+    }
+
     if !ctx.atomics.is_playing.load(Ordering::Acquire) {
         output.fill(0.0);
         return;
@@ -375,7 +391,6 @@ fn fill_output(
 
     let volume = ctx.atomics.get_volume();
     let read = {
-        use ringbuf::traits::Consumer;
         consumer.pop_slice(output)
     };
 

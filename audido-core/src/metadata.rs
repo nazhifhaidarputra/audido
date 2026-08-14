@@ -161,6 +161,7 @@ pub struct AudioMetadata {
     pub electronicness: Option<f32>,
     // Add more in the future (optional)
     // pub lyric: Option<LyricData> // LyricData store lyrics and each part's timestamp
+    pub cover: Option<Vec<u8>>,
 }
 
 impl Default for AudioMetadata {
@@ -181,6 +182,7 @@ impl Default for AudioMetadata {
             danceability: None,
             acousticness: None,
             electronicness: None,
+            cover: None,
         }
     }
 }

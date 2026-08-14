@@ -1,8 +1,9 @@
 use audido_core::{commands::CoreEvent, queue::LoopMode};
+use ratatui_image::picker::Picker;
 use strum::IntoEnumIterator;
 
 use crate::states::{
-    AudioState, BrowserState, EqState, QueueState, SettingsState, normalizer::NormalizerState,
+    AudioState, BrowserState, EqState, QueueState, SettingsState, audio::ImageProtocolWrapper, normalizer::NormalizerState,
 };
 
 /// Application state for the TUI
@@ -19,10 +20,12 @@ pub struct AppState {
     pub settings: SettingsState,
     /// Normalizer State
     pub normalizer: NormalizerState,
+    /// Stores the pre-initialized terminal image picker
+    pub picker: Picker,
 }
 
 impl AppState {
-    pub fn new() -> Self {
+    pub fn new(picker: Picker) -> Self {
         Self {
             audio: AudioState::new(),
             browser: BrowserState::new(),
@@ -30,6 +33,7 @@ impl AppState {
             eq: EqState::new(),
             settings: SettingsState::new(),
             normalizer: NormalizerState::new(),
+            picker
         }
     }
 
@@ -58,6 +62,7 @@ impl AppState {
                     metadata.title.as_deref().unwrap_or("Unknown"),
                     metadata.author.as_deref().unwrap_or("Unknown")
                 );
+                self.update_cover_image(&metadata);
                 self.audio.metadata = Some(metadata);
             }
             CoreEvent::Position { current, total } => {
@@ -83,6 +88,7 @@ impl AppState {
             CoreEvent::TrackChanged { index, metadata } => {
                 self.queue.current_queue_index = Some(index);
                 self.queue.queue_state.select(Some(index));
+                self.update_cover_image(&metadata);
                 self.audio.metadata = Some(metadata);
                 self.audio.status_message =
                     format!("Track {}/{}", index + 1, self.queue.queue.len());
@@ -152,5 +158,17 @@ impl AppState {
         }
         // Return the next mode in the sequence, or the first if at the end
         modes.next().unwrap_or(LoopMode::Off)
+    }
+
+    /// Update the cover image in the audio state
+    fn update_cover_image(&mut self, metadata: &audido_core::metadata::AudioMetadata) {
+        let image_protocol = metadata.cover.as_ref().and_then(|bytes| {
+            let dyn_img = image::load_from_memory(bytes).ok()?;
+                
+            let target_size = ratatui::layout::Size::new(28, 12);
+            
+            self.picker.new_protocol(dyn_img, target_size, ratatui_image::Resize::Fit(None)).ok()
+        });
+        self.audio.cover_image_protocol = ImageProtocolWrapper::new(image_protocol);
     }
 }

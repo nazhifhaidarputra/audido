@@ -88,6 +88,9 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn run_tui(mut handle: CoreHandle, initial_files: Vec<String>) -> anyhow::Result<()> {
+    let picker = ratatui_image::picker::Picker::from_query_stdio()
+        .unwrap_or_else(|_| ratatui_image::picker::Picker::halfblocks());
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -95,7 +98,7 @@ fn run_tui(mut handle: CoreHandle, initial_files: Vec<String>) -> anyhow::Result
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = ratatui::Terminal::new(backend)?;
 
-    let mut state = AppState::new();
+    let mut state = AppState::new(picker);
     let mut router = Router::new(Box::new(PlaybackRoute));
 
     // Subscribe to broadcast events from the audio core

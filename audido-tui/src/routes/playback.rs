@@ -52,9 +52,9 @@ impl RouteHandler for PlaybackRoute {
             }
             KeyCode::Char(' ') => {
                 if state.audio.is_playing {
-                    modules::playback::pause(ctx);
+                    handle.spawn(modules::playback::pause(handle.ctx()));
                 } else {
-                    modules::playback::play(ctx);
+                    handle.spawn(modules::playback::play(handle.ctx()));
                 }
             }
             KeyCode::Char('s') => {
@@ -85,10 +85,15 @@ pub fn draw_playback_panel(f: &mut Frame, area: Rect, audio_state: &AudioState) 
     // Panel is active when rendered (router-based system)
     let is_active = true;
 
+    // let has_cover = audio_state
+    //     .metadata
+    //     .as_ref()
+    //     .map_or(false, |m| m.cover.is_some());
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6), // Now playing info
+            Constraint::Length(16), // Now playing info
             Constraint::Length(3), // Progress bar
             Constraint::Length(3), // Controls info
             Constraint::Min(0),    // Status/spacer
@@ -135,7 +140,30 @@ fn draw_now_playing(f: &mut Frame, area: Rect, audio_state: &AudioState, is_acti
         ];
 
         let paragraph = Paragraph::new(text);
-        f.render_widget(paragraph, inner);
+        if let Some(protocol) = audio_state.cover_image_protocol.get() {
+            let inner_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Length(30), // Fixed width for the cover art
+                    Constraint::Length(1), // Margin
+                    Constraint::Min(0),     // Remaining width for the text
+                ])
+                .split(inner);
+            
+            let image_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray));
+
+            let image_area = image_block.inner(inner_chunks[0]);
+            
+            f.render_widget(image_block, inner_chunks[0]);
+            let image_widget = ratatui_image::Image::new(protocol);
+            f.render_widget(image_widget, image_area);
+            
+            f.render_widget(paragraph, inner_chunks[2]);
+        } else {
+            f.render_widget(paragraph, inner);
+        }
     } else {
         let text = Paragraph::new("No audio loaded").style(Style::default().fg(Color::DarkGray));
         f.render_widget(text, inner);

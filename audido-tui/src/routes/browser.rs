@@ -12,7 +12,7 @@ use crate::{
     router::{RouteAction, RouteHandler},
     routes::playback::PlaybackRoute,
     state::AppState,
-    states::{BrowserFileDialog, BrowserState},
+    states::{BrowserFileDialog},
     ui::{DialogProperties, draw_generic_dialog},
 };
 
@@ -22,7 +22,7 @@ pub struct BrowserRoute;
 
 impl RouteHandler for BrowserRoute {
     fn render(&self, frame: &mut Frame, area: Rect, state: &AppState) {
-        draw_browser_panel(frame, area, &state.browser);
+        draw_browser_panel(frame, area, state);
 
         if let BrowserFileDialog::Open { path, selected } = &state.browser.dialog {
             let filename = path
@@ -102,8 +102,9 @@ impl RouteHandler for BrowserRoute {
     }
 }
 
-pub fn draw_browser_panel(f: &mut Frame, area: Rect, browser_state: &BrowserState) {
-    let is_active = true;
+pub fn draw_browser_panel(f: &mut Frame, area: Rect, state: &AppState) {
+    let browser_state = &state.browser;
+    let accent = state.theme.foreground_color;
 
     let title = if browser_state.current_dir.as_os_str().is_empty() {
         " Browser: System Drives ".to_string()
@@ -114,11 +115,7 @@ pub fn draw_browser_panel(f: &mut Frame, area: Rect, browser_state: &BrowserStat
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(if is_active {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default()
-        });
+        .border_style(Style::default().fg(accent));
 
     let items: Vec<ListItem> = browser_state
         .items

@@ -24,6 +24,7 @@ mod routes;
 mod state;
 mod states;
 mod ui;
+mod themes;
 
 use router::{Router, route_for_name, tab_names};
 use state::AppState;

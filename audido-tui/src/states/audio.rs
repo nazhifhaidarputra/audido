@@ -1,4 +1,4 @@
-use std::fmt::{self, Debug, Display};
+use std::fmt::{self, Debug};
 
 use audido_core::metadata::AudioMetadata;
 use ratatui_image::protocol::Protocol;
@@ -37,6 +37,7 @@ impl ImageProtocolWrapper {
         self.0.as_ref()
     }
 
+    #[allow(unused)]
     pub fn get_mut(&mut self) -> Option<&mut Protocol> {
         self.0.as_mut()
     }

@@ -5,3 +5,4 @@ Cargo.lock
 .idea/
 .DS_Store
 *.log
+assets/images/*

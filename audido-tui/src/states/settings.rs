@@ -2,6 +2,7 @@
 pub enum SettingsOption {
     Equalizer,
     Normalize,
+    Theme,
 }
 
 impl SettingsOption {
@@ -9,6 +10,7 @@ impl SettingsOption {
         match self {
             SettingsOption::Equalizer => "Equalizer",
             SettingsOption::Normalize => "Normalize Audio",
+            SettingsOption::Theme => "Theme",
         }
     }
 }
@@ -26,7 +28,11 @@ pub struct SettingsState {
 impl SettingsState {
     pub fn new() -> Self {
         Self {
-            items: vec![SettingsOption::Equalizer, SettingsOption::Normalize],
+            items: vec![
+                SettingsOption::Equalizer,
+                SettingsOption::Normalize,
+                SettingsOption::Theme,
+            ],
             selected_index: 0,
             is_dialog_open: false,
             dialog_selection_index: 0,

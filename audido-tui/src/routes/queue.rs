@@ -10,7 +10,6 @@ use ratatui::{
 use crate::{
     router::{RouteAction, RouteHandler},
     state::AppState,
-    states::QueueState,
 };
 
 /// Queue route
@@ -19,7 +18,7 @@ pub struct QueueRoute;
 
 impl RouteHandler for QueueRoute {
     fn render(&self, frame: &mut Frame, area: Rect, state: &AppState) {
-        draw_queue_panel(frame, area, &state.queue);
+        draw_queue_panel(frame, area, state);
     }
 
     fn handle_input(
@@ -47,19 +46,15 @@ impl RouteHandler for QueueRoute {
 }
 
 /// Draw the queue panel
-pub fn draw_queue_panel(f: &mut Frame, area: Rect, queue_state: &QueueState) {
-    // Panel is active when rendered (router-based system)
-    let is_active = true;
+pub fn draw_queue_panel(f: &mut Frame, area: Rect, state: &AppState) {
+    let queue_state = &state.queue;
+    let accent = state.theme.foreground_color;
 
     let title = format!(" Queue ({} tracks) ", queue_state.queue.len());
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(if is_active {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default()
-        });
+        .border_style(Style::default().fg(accent));
 
     let items: Vec<ListItem> = queue_state
         .queue
@@ -80,11 +75,12 @@ pub fn draw_queue_panel(f: &mut Frame, area: Rect, queue_state: &QueueState) {
                 });
             let style = if is_current {
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(accent)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::White)
             };
+
             ListItem::new(format!("{}{}", prefix, name)).style(style)
         })
         .collect();

@@ -16,7 +16,8 @@ use crate::{
     router::{RouteAction, RouteHandler},
     routes::eq::EqualizerRoute,
     state::AppState,
-    states::{EqState, SettingsOption, SettingsState, normalizer::NormalizerState},
+    states::SettingsOption,
+    themes::AppTheme,
 };
 
 /// Settings route
@@ -25,7 +26,7 @@ pub struct SettingsRoute;
 
 impl RouteHandler for SettingsRoute {
     fn render(&self, frame: &mut Frame, area: Rect, state: &AppState) {
-        draw_settings_panel(frame, area, &state.settings, &state.eq, &state.normalizer);
+        draw_settings_panel(frame, area, state);
     }
 
     fn handle_input(
@@ -38,8 +39,21 @@ impl RouteHandler for SettingsRoute {
             KeyCode::Up => state.settings.prev_item(),
             KeyCode::Down => state.settings.next_item(),
             KeyCode::Enter => {
-                // Navigate to EQ panel
-                return Ok(RouteAction::Push(Box::new(EqualizerRoute::default())));
+                let selected = state
+                    .settings
+                    .items
+                    .get(state.settings.selected_index)
+                    .copied();
+                match selected {
+                    Some(SettingsOption::Equalizer) => {
+                        return Ok(RouteAction::Push(Box::new(EqualizerRoute::default())));
+                    }
+                    Some(SettingsOption::Theme) => {
+                        // Cycle to the next theme
+                        state.theme = AppTheme::next_theme(state.theme.name);
+                    }
+                    _ => {}
+                }
             }
             _ => {}
         }
@@ -51,34 +65,20 @@ impl RouteHandler for SettingsRoute {
     }
 }
 
-pub fn draw_settings_panel(
-    f: &mut Frame,
-    area: Rect,
-    settings_state: &SettingsState,
-    eq_state: &EqState,
-    normalizer_state: &NormalizerState,
-) {
-    // Panel is active when rendered (router-based system)
-    let is_active = true;
-    draw_settings_list(f, area, settings_state, eq_state, normalizer_state, is_active);
+pub fn draw_settings_panel(f: &mut Frame, area: Rect, state: &AppState) {
+    draw_settings_list(f, area, state);
 }
 
-fn draw_settings_list(
-    f: &mut Frame,
-    area: Rect,
-    settings_state: &SettingsState,
-    eq_state: &EqState,
-    normalizer_state: &NormalizerState,
-    is_active: bool,
-) {
+fn draw_settings_list(f: &mut Frame, area: Rect, state: &AppState) {
+    let theme = &state.theme;
+    let settings_state = &state.settings;
+    let eq_state = &state.eq;
+    let normalizer_state = &state.normalizer;
+
     let block = Block::default()
         .title(" Settings ")
         .borders(Borders::ALL)
-        .border_style(if is_active {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        });
+        .border_style(Style::default().fg(theme.foreground_color));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -88,23 +88,25 @@ fn draw_settings_list(
         .iter()
         .enumerate()
         .map(|(i, setting)| {
-            let is_selected = settings_state.selected_index == i && !settings_state.is_dialog_open;
+            let is_selected =
+                settings_state.selected_index == i && !settings_state.is_dialog_open;
 
-            let value_str = match setting {
+            let value_str: String = match setting {
                 SettingsOption::Equalizer => {
                     if eq_state.eq_enabled {
-                        "On"
+                        "On".to_string()
                     } else {
-                        "Off"
+                        "Off".to_string()
                     }
                 }
                 SettingsOption::Normalize => {
                     if normalizer_state.enabled {
-                        "On"
+                        "On".to_string()
                     } else {
-                        "Off"
+                        "Off".to_string()
                     }
-                },
+                }
+                SettingsOption::Theme => theme.name.to_string(),
             };
 
             let prefix = if is_selected { "▶ " } else { "  " };
@@ -119,7 +121,10 @@ fn draw_settings_list(
             ListItem::new(Line::from(vec![
                 Span::styled(format!("{}{}", prefix, setting.label()), style),
                 Span::raw(" "),
-                Span::styled(format!("[{}]", value_str), Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!("[{}]", value_str),
+                    Style::default().fg(theme.foreground_color),
+                ),
             ]))
         })
         .collect();
@@ -127,3 +132,4 @@ fn draw_settings_list(
     let list = List::new(items);
     f.render_widget(list, inner);
 }
+

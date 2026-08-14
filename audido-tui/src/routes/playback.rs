@@ -12,6 +12,7 @@ use crate::{
     router::{RouteAction, RouteHandler},
     state::AppState,
     states::AudioState,
+    themes::CoverArt,
 };
 
 // ==================================================================
@@ -23,7 +24,7 @@ pub struct PlaybackRoute;
 
 impl RouteHandler for PlaybackRoute {
     fn render(&self, frame: &mut Frame, area: Rect, state: &AppState) {
-        draw_playback_panel(frame, area, &state.audio);
+        draw_playback_panel(frame, area, state);
     }
 
     fn handle_input(
@@ -81,38 +82,28 @@ impl RouteHandler for PlaybackRoute {
 }
 
 /// Draw the playback panel
-pub fn draw_playback_panel(f: &mut Frame, area: Rect, audio_state: &AudioState) {
-    // Panel is active when rendered (router-based system)
-    let is_active = true;
-
-    // let has_cover = audio_state
-    //     .metadata
-    //     .as_ref()
-    //     .map_or(false, |m| m.cover.is_some());
-
+pub fn draw_playback_panel(f: &mut Frame, area: Rect, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(16), // Now playing info
-            Constraint::Length(3), // Progress bar
-            Constraint::Length(3), // Controls info
-            Constraint::Min(0),    // Status/spacer
+            Constraint::Length(3),  // Progress bar
+            Constraint::Min(0),     // Status/spacer
         ])
         .split(area);
 
-    draw_now_playing(f, chunks[0], audio_state, is_active);
-    draw_progress(f, chunks[1], audio_state);
+    draw_now_playing(f, chunks[0], state);
+    draw_progress(f, chunks[1], &state.audio, state.theme.foreground_color);
 }
 
 /// Draw the now playing section
-fn draw_now_playing(f: &mut Frame, area: Rect, audio_state: &AudioState, is_active: bool) {
-    let border_style = if is_active {
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
+fn draw_now_playing(f: &mut Frame, area: Rect, state: &AppState) {
+    let audio_state = &state.audio;
+    let theme = &state.theme;
+
+    let border_style = Style::default()
+        .fg(theme.foreground_color)
+        .add_modifier(Modifier::BOLD);
 
     let block = Block::default()
         .title(" 🎵 Now Playing ")
@@ -140,29 +131,76 @@ fn draw_now_playing(f: &mut Frame, area: Rect, audio_state: &AudioState, is_acti
         ];
 
         let paragraph = Paragraph::new(text);
+
         if let Some(protocol) = audio_state.cover_image_protocol.get() {
+            // Track has an embedded cover image → render it
             let inner_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
                     Constraint::Length(30), // Fixed width for the cover art
-                    Constraint::Length(1), // Margin
+                    Constraint::Length(1),  // Margin
                     Constraint::Min(0),     // Remaining width for the text
                 ])
                 .split(inner);
-            
+
             let image_block = Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::DarkGray));
 
             let image_area = image_block.inner(inner_chunks[0]);
-            
             f.render_widget(image_block, inner_chunks[0]);
             let image_widget = ratatui_image::Image::new(protocol);
             f.render_widget(image_widget, image_area);
-            
             f.render_widget(paragraph, inner_chunks[2]);
         } else {
-            f.render_widget(paragraph, inner);
+            // No embedded cover — fall back to theme default_cover
+            match &theme.default_cover {
+                CoverArt::AsciiArt(art_lines) => {
+                    let inner_chunks = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([
+                            Constraint::Length(50), // ASCII art panel
+                            Constraint::Length(1),  // Margin
+                            Constraint::Min(0),     // Metadata text
+                        ])
+                        .split(inner);
+
+                    let art_block = Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(theme.foreground_color));
+
+                    let art_inner = art_block.inner(inner_chunks[0]);
+                    f.render_widget(art_block, inner_chunks[0]);
+
+                    let ascii_paragraph = Paragraph::new(art_lines.clone());
+                    f.render_widget(ascii_paragraph, art_inner);
+
+                    f.render_widget(paragraph, inner_chunks[2]);
+                }
+                CoverArt::Image(protocol) => {
+                    let inner_chunks = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([
+                            Constraint::Length(30),
+                            Constraint::Length(1),
+                            Constraint::Min(0),
+                        ])
+                        .split(inner);
+
+                    let image_block = Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::DarkGray));
+
+                    let image_area = image_block.inner(inner_chunks[0]);
+                    f.render_widget(image_block, inner_chunks[0]);
+                    let image_widget = ratatui_image::Image::new(protocol);
+                    f.render_widget(image_widget, image_area);
+                    f.render_widget(paragraph, inner_chunks[2]);
+                }
+                CoverArt::None => {
+                    f.render_widget(paragraph, inner);
+                }
+            }
         }
     } else {
         let text = Paragraph::new("No audio loaded").style(Style::default().fg(Color::DarkGray));
@@ -171,7 +209,7 @@ fn draw_now_playing(f: &mut Frame, area: Rect, audio_state: &AudioState, is_acti
 }
 
 /// Draw the progress bar
-fn draw_progress(f: &mut Frame, area: Rect, audio_state: &AudioState) {
+fn draw_progress(f: &mut Frame, area: Rect, audio_state: &AudioState, accent: Color) {
     let progress_pct = (audio_state.progress() * 100.0) as u16;
     let position_str = AudioState::format_time(audio_state.position);
     let duration_str = AudioState::format_time(audio_state.duration);
@@ -180,7 +218,7 @@ fn draw_progress(f: &mut Frame, area: Rect, audio_state: &AudioState) {
 
     let gauge = Gauge::default()
         .block(Block::default().borders(Borders::ALL))
-        .gauge_style(Style::default().fg(Color::Cyan).bg(Color::DarkGray))
+        .gauge_style(Style::default().fg(accent).bg(Color::DarkGray))
         .percent(progress_pct)
         .label(label);
 

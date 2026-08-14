@@ -28,11 +28,13 @@ pub fn draw(f: &mut Frame, state: &AppState, router: &crate::router::Router) {
 }
 
 /// Draw navigation menu vertically on the top
-fn draw_navigation_bar(f: &mut Frame, area: Rect, _state: &AppState, router: &crate::router::Router) {
+fn draw_navigation_bar(f: &mut Frame, area: Rect, state: &AppState, router: &crate::router::Router) {
+    let accent = state.theme.foreground_color;
+
     let block = Block::default()
     .title(" Navigation ")
     .borders(Borders::ALL)
-    .border_style(Style::default().fg(Color::Cyan));
+    .border_style(Style::default().fg(accent));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -46,7 +48,7 @@ fn draw_navigation_bar(f: &mut Frame, area: Rect, _state: &AppState, router: &cr
         let prefix = if is_active { "▶ " } else { "  " };
         let style = if is_active {
             Style::default()
-                .fg(Color::Cyan)
+                .fg(accent)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::Gray)

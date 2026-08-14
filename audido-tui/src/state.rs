@@ -2,9 +2,9 @@ use audido_core::{commands::CoreEvent, queue::LoopMode};
 use ratatui_image::picker::Picker;
 use strum::IntoEnumIterator;
 
-use crate::states::{
+use crate::{states::{
     AudioState, BrowserState, EqState, QueueState, SettingsState, audio::ImageProtocolWrapper, normalizer::NormalizerState,
-};
+}, themes::AppTheme};
 
 /// Application state for the TUI
 pub struct AppState {
@@ -22,6 +22,8 @@ pub struct AppState {
     pub normalizer: NormalizerState,
     /// Stores the pre-initialized terminal image picker
     pub picker: Picker,
+    /// Current application theme
+    pub theme: AppTheme,
 }
 
 impl AppState {
@@ -33,7 +35,8 @@ impl AppState {
             eq: EqState::new(),
             settings: SettingsState::new(),
             normalizer: NormalizerState::new(),
-            picker
+            theme: AppTheme::default_theme(),
+            picker,
         }
     }
 

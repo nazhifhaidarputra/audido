@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, Paragraph},
+    widgets::{Bar, BarChart, BarGroup, Block, Borders, Gauge, Paragraph},
 };
 
 use crate::{
@@ -87,13 +87,14 @@ pub fn draw_playback_panel(f: &mut Frame, area: Rect, state: &AppState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(16), // Now playing info
+            Constraint::Min(8),     // Spectrum visualizer
             Constraint::Length(3),  // Progress bar
-            Constraint::Min(0),     // Status/spacer
         ])
         .split(area);
 
     draw_now_playing(f, chunks[0], state);
-    draw_progress(f, chunks[1], &state.audio, state.theme.foreground_color);
+    draw_freq_spectrum(f, chunks[1], state);
+    draw_progress(f, chunks[2], &state.audio, state.theme.foreground_color);
 }
 
 /// Draw the now playing section
@@ -159,7 +160,7 @@ fn draw_now_playing(f: &mut Frame, area: Rect, state: &AppState) {
                     let inner_chunks = Layout::default()
                         .direction(Direction::Horizontal)
                         .constraints([
-                            Constraint::Length(50), // ASCII art panel
+                            Constraint::Length(30), // ASCII art panel
                             Constraint::Length(1),  // Margin
                             Constraint::Min(0),     // Metadata text
                         ])
@@ -224,3 +225,139 @@ fn draw_progress(f: &mut Frame, area: Rect, audio_state: &AudioState, accent: Co
 
     f.render_widget(gauge, area);
 }
+
+/// Draw bar spectrum for the audio visualizer.
+/// Renders between the `now_playing` panel and the `progress` bar.
+fn draw_freq_spectrum(f: &mut Frame, area: Rect, state: &AppState) {
+    let accent = state.theme.foreground_color;
+let accent = state.theme.foreground_color;
+
+    let border_style = Style::default().fg(accent);
+    let block = Block::default()
+        .title(" 〰 Spectrum ")
+        .borders(Borders::ALL)
+        .border_style(border_style);
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let bins = state.audio.visualizer_config.bins();
+
+    // Flat floor until real audio data arrives.
+    let all_silent = bins.iter().all(|&v| v <= -130.0);
+    if bins.is_empty() || all_silent {
+        let msg = if state.audio.is_playing {
+            "Analyzing…"
+        } else {
+            "No audio"
+        };
+        let text = Paragraph::new(msg)
+            .style(Style::default().fg(Color::DarkGray))
+            .centered();
+        f.render_widget(text, inner);
+        return;
+    }
+
+    const DB_FLOOR: f32 = -70.0;  // silence floor
+    const DB_CEIL:  f32 = -10.0;  // practical clip level for music
+    let db_range = DB_CEIL - DB_FLOOR;
+
+    let bar_width: u16 = 1;
+    let bar_gap:   u16 = 0;
+    let max_bars = (inner.width as usize / (bar_width + bar_gap) as usize).max(1);
+    
+    let bar_height = inner.height as u64;
+    if bar_height == 0 {
+        return;
+    }
+
+    // ---------------------------------------------------------------
+    // Logarithmic Frequency Mapping
+    // ---------------------------------------------------------------
+    // Fetch sample rate to calculate the Nyquist limit
+    let sample_rate = state.audio.metadata.as_ref().map(|m| m.sample_rate).unwrap_or(44100) as f32;
+    let nyquist = sample_rate / 2.0;
+
+    const MIN_FREQ: f32 = 20.0; // Lowest audible bass
+    let max_freq: f32 = nyquist.min(20000.0); // Highest audible treble limit
+
+    let log_min = MIN_FREQ.log2();
+    let log_max = max_freq.log2();
+
+    // Gradient: bass → cyan, low-mids → green, high-mids → amber, treble → magenta.
+    let gradient: &[(f32, Color)] = &[
+        (0.00, Color::Rgb(0,   210, 210)),
+        (0.33, Color::Rgb(40,  200, 60)),
+        (0.66, Color::Rgb(230, 170, 0)),
+        (1.00, Color::Rgb(210, 50,  210)),
+    ];
+
+    let lerp_color = |t: f32| -> Color {
+        let t = t.clamp(0.0, 1.0);
+        let mut lo = gradient[0];
+        let mut hi = gradient[gradient.len() - 1];
+        for win in gradient.windows(2) {
+            if t >= win[0].0 && t <= win[1].0 {
+                lo = win[0];
+                hi = win[1];
+                break;
+            }
+        }
+        let span = (hi.0 - lo.0).max(1e-6);
+        let s = ((t - lo.0) / span).clamp(0.0, 1.0);
+        let lerp_u8 = |a: u8, b: u8| -> u8 {
+            (a as f32 + s * (b as f32 - a as f32)) as u8
+        };
+        match (lo.1, hi.1) {
+            (Color::Rgb(r0, g0, b0), Color::Rgb(r1, g1, b1)) => {
+                Color::Rgb(lerp_u8(r0, r1), lerp_u8(g0, g1), lerp_u8(b0, b1))
+            }
+            _ => lo.1,
+        }
+    };
+
+    let bars: Vec<Bar> = (0..max_bars)
+        .map(|i| {
+            // 1. Calculate the logarithmic frequency bounds for this visual bar
+            let f_start = (log_min + (i as f32 / max_bars as f32) * (log_max - log_min)).exp2();
+            let f_end = (log_min + ((i + 1) as f32 / max_bars as f32) * (log_max - log_min)).exp2();
+
+            // 2. Map the frequencies to indices in our linear FFT bins array
+            let mut bin_start = ((f_start / nyquist) * bins.len() as f32) as usize;
+            let mut bin_end = ((f_end / nyquist) * bins.len() as f32).ceil() as usize;
+
+            // 3. Ensure bounds are safe and we grab at least 1 bin
+            bin_start = bin_start.clamp(0, bins.len().saturating_sub(1));
+            bin_end = bin_end.clamp(bin_start + 1, bins.len());
+
+            let bin_slice = &bins[bin_start..bin_end];
+
+            // 4. Extract the peak dB within this logarithmic chunk
+            let peak_db = bin_slice
+                .iter()
+                .copied()
+                .fold(f32::NEG_INFINITY, f32::max);
+                
+            let clamped = peak_db.clamp(DB_FLOOR, DB_CEIL);
+            let norm    = (clamped - DB_FLOOR) / db_range; // 0.0 – 1.0
+            let height  = (norm * bar_height as f32).round() as u64;
+
+            let t = i as f32 / max_bars.max(1) as f32;
+            let color = lerp_color(t);
+
+            Bar::default()
+                .value(height)
+                .text_value(String::new())
+                .style(Style::default().fg(color))
+        })
+        .collect();
+
+    let bar_chart = BarChart::default()
+        .data(BarGroup::default().bars(&bars))
+        .bar_width(bar_width)
+        .bar_gap(bar_gap)
+        .max(bar_height);
+
+    f.render_widget(bar_chart, inner);
+}
+

@@ -13,11 +13,11 @@ impl AppTheme {
             let img = image::load_from_memory(bytes).expect("Failed to load embedded Miku image");
             
             // Constrain ASCII size to 50 width and 14 height to match the UI block
-            let ascii_art = image_to_ascii_paragraph(&img, 50, 14);
+            let ascii_art = image_to_ascii_paragraph(&img, 30, 14);
 
             Self {
                 name: "Hatsune Miku",
-                foreground_color: Color::Rgb(57, 197, 187), // Miku Teal
+                foreground_color: Color::Rgb(57, 197, 187),
                 font_color: Color::Rgb(57, 197, 187),
                 default_cover: CoverArt::AsciiArt(ascii_art),
             }
@@ -29,11 +29,11 @@ impl AppTheme {
         THEME.get_or_init(|| {
             let bytes = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/images/kasane_teto.png"));
             let img = image::load_from_memory(bytes).expect("Failed to load embedded Teto image");
-            let ascii_art = image_to_ascii_paragraph(&img, 50, 14);
+            let ascii_art = image_to_ascii_paragraph(&img, 30, 14);
 
             Self {
                 name: "Kasane Teto",
-                foreground_color: Color::Rgb(212, 66, 114), // Teto Cerise/Red
+                foreground_color: Color::Rgb(212, 66, 114),
                 font_color: Color::Rgb(212, 66, 114),
                 default_cover: CoverArt::AsciiArt(ascii_art),
             }

@@ -28,3 +28,4 @@ pitch-detection = "0.3.0"
 ringbuf = "0.5.1"
 # CPAL: low-level cross-platform audio I/O for the output stream
 cpal = "0.15"
+apodize = "1.0.0"

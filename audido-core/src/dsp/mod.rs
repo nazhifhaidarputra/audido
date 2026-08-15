@@ -1,3 +1,4 @@
+pub mod spectrum;
 pub mod dsp_graph;
 pub mod eq;
 pub mod pitch_detection;

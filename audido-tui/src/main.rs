@@ -102,6 +102,10 @@ fn run_tui(mut handle: CoreHandle, initial_files: Vec<String>) -> anyhow::Result
     let mut state = AppState::new(picker);
     let mut router = Router::new(Box::new(PlaybackRoute));
 
+    // Wire up the spectrum SPSC: grab the consumer from the core and give it to the visualizer.
+    let spectrum_consumer = handle.take_spectrum_consumer(state.audio.visualizer_config.bin_size);
+    state.audio.visualizer_config.attach_consumer(spectrum_consumer);
+
     // Subscribe to broadcast events from the audio core
     let mut event_rx = handle.subscribe();
 
@@ -135,6 +139,8 @@ fn run_tui(mut handle: CoreHandle, initial_files: Vec<String>) -> anyhow::Result
         }
 
         // Draw UI
+        // Drain the spectrum ring buffer first so the visualizer has fresh data.
+        state.audio.visualizer_config.update();
         terminal.draw(|f| ui::draw(f, &state, &router))?;
 
         // Handle input

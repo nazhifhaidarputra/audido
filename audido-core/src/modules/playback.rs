@@ -84,7 +84,6 @@ pub fn set_speed(ctx: Arc<CoreContext>, speed: f32) {
     ctx.atomics.set_speed(speed.clamp(0.1, 4.0));
 }
 
-
 // ==========================================
 // ============ Internal helpers ============
 // ==========================================
@@ -277,6 +276,22 @@ fn run_dsp_feed_loop(ctx: Arc<CoreContext>, rt_rx: crossbeam_channel::Receiver<R
             norm_node.instance.process(&mut chunk);
         }
 
+        // Spectrum analysis — push bins into the SPSC ring for the TUI to consume.
+        // Use try_lock so we never block the real-time DSP thread.
+        if let Ok(mut fft) = ctx.zero_copy_fft.try_lock() {
+            let bin_size = ctx.spectrum_bin_size.load(Ordering::Relaxed);
+            // Lazy resize: update engine if the TUI changed bin_size.
+            if fft.bin_size != bin_size && bin_size > 0 {
+                fft.bin_size = bin_size;
+            }
+            let channels = ctx.atomics.num_channels.load(Ordering::Relaxed) as u16;
+            let bins = fft.process(&chunk, channels);
+            // Non-blocking push: if the ring is full the TUI is just slow — drop the frame.
+            if let Ok(mut prod) = ctx.spectrum_producer.try_lock() {
+                let _ = prod.push_slice(&bins);
+            }
+        }
+
         // Push to ring buffer (yield on full)
         let mut written = 0;
         while written < chunk.len() {
@@ -293,3 +308,4 @@ fn run_dsp_feed_loop(ctx: Arc<CoreContext>, rt_rx: crossbeam_channel::Receiver<R
 
     log::debug!("DSP feed loop ended.");
 }
+

@@ -25,6 +25,9 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
 };
 
+/// Default number of FFT frequency bins for the spectrum visualizer.
+pub const DEFAULT_SPECTRUM_BIN_SIZE: usize = 1024;
+
 use anyhow::Context;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossbeam_channel::Sender;
@@ -32,10 +35,7 @@ use ringbuf::{HeapCons, HeapProd, HeapRb, traits::{Consumer, Split}};
 use tokio::sync::broadcast;
 
 use crate::{
-    commands::{CoreEvent, RealtimeCommand},
-    dsp::{eq::Equalizer, normalization::Normalizer},
-    queue::PlaybackQueue,
-    source::AudioPlaybackData,
+    commands::{CoreEvent, RealtimeCommand}, dsp::{eq::Equalizer, normalization::Normalizer, spectrum::FftSpectrumEngine}, queue::PlaybackQueue, source::AudioPlaybackData,
 };
 // ================================
 // ========== Constants ===========
@@ -136,6 +136,18 @@ pub struct CoreContext {
     // Tokio runtime handle
     /// Background async runtime. All module functions use this to spawn tasks.
     pub tokio_handle: tokio::runtime::Handle,
+
+    /// FFT engine used by the DSP feed loop for spectrum analysis.
+    pub zero_copy_fft: Mutex<FftSpectrumEngine>,
+
+    // Spectrum visualizer SPSC
+    /// Number of frequency bins the FFT engine should produce each chunk.
+    /// Written by the TUI (via `take_spectrum_consumer`) and read lock-free by the DSP thread.
+    pub spectrum_bin_size: AtomicUsize,
+    /// Producer side of the spectrum SPSC ring buffer.
+    /// The DSP thread pushes a flat `Vec<f32>` of `spectrum_bin_size` bins each chunk.
+    /// Wrapped in Mutex so it can be hot-swapped when bin_size changes.
+    pub spectrum_producer: Mutex<HeapProd<f32>>,
 }
 
 impl CoreContext {
@@ -143,6 +155,7 @@ impl CoreContext {
         event_tx: broadcast::Sender<CoreEvent>,
         tokio_handle: tokio::runtime::Handle,
         ring_producer: HeapProd<f32>,
+        spectrum_producer: HeapProd<f32>,
     ) -> Self {
         Self {
             atomics: PlaybackAtomics::default(),
@@ -156,6 +169,9 @@ impl CoreContext {
             rt_cmd_tx: Mutex::new(None),
             event_tx,
             tokio_handle,
+            zero_copy_fft: Mutex::new(FftSpectrumEngine::new(4096, DEFAULT_SPECTRUM_BIN_SIZE)),
+            spectrum_bin_size: AtomicUsize::new(DEFAULT_SPECTRUM_BIN_SIZE),
+            spectrum_producer: Mutex::new(spectrum_producer),
         }
     }
 
@@ -176,6 +192,9 @@ pub struct CoreHandle {
     _runtime: Arc<tokio::runtime::Runtime>,
     /// Keep CPAL stream alive — dropping it silences output.
     pub stream: Option<cpal::Stream>,
+    /// One-shot: the consumer end of the spectrum SPSC ring buffer.
+    /// Taken by the TUI at startup via `take_spectrum_consumer`.
+    spectrum_consumer: Option<HeapCons<f32>>,
 }
 
 impl CoreHandle {
@@ -196,6 +215,34 @@ impl CoreHandle {
         F: std::future::Future<Output = ()> + Send + 'static,
     {
         self.ctx.tokio_handle.spawn(fut);
+    }
+
+    /// Take the spectrum SPSC consumer and (re-)size the ring buffer for `bin_size` bins.
+    ///
+    /// - The first call at startup consumes the pre-allocated consumer created in [`init`].
+    /// - Subsequent calls (e.g. when the user changes `bin_size`) create a fresh ring buffer,
+    ///   swap the producer into `CoreContext`, and return the new consumer.
+    /// - The DSP thread reads `ctx.spectrum_bin_size` atomically each chunk to know how many
+    ///   bins to produce, so no restart is needed.
+    pub fn take_spectrum_consumer(&mut self, bin_size: usize) -> HeapCons<f32> {
+        // Update the atomic so the DSP thread picks up the new size.
+        self.ctx.spectrum_bin_size.store(bin_size, Ordering::Relaxed);
+
+        if let Some(consumer) = self.spectrum_consumer.take() {
+            // First call: ring was already sized at DEFAULT_SPECTRUM_BIN_SIZE.
+            // If bin_size matches, reuse it; otherwise fall through to rebuild.
+            if bin_size == DEFAULT_SPECTRUM_BIN_SIZE {
+                return consumer;
+            }
+            // bin_size differs from default — drop the old consumer and rebuild.
+            drop(consumer);
+        }
+
+        // Build a fresh ring sized for the requested bin_size.
+        let ring = HeapRb::<f32>::new(bin_size * 8);
+        let (producer, consumer) = ring.split();
+        *self.ctx.spectrum_producer.lock().expect("spectrum_producer poisoned") = producer;
+        consumer
     }
 }
 
@@ -227,6 +274,10 @@ pub fn init() -> anyhow::Result<CoreHandle> {
     let ring = HeapRb::<f32>::new(RING_BUFFER_CAPACITY);
     let (producer, consumer) = ring.split();
 
+    // Spectrum SPSC: capacity = DEFAULT_SPECTRUM_BIN_SIZE * 8 frames of headroom
+    let spectrum_ring = HeapRb::<f32>::new(DEFAULT_SPECTRUM_BIN_SIZE * 8);
+    let (spectrum_producer, spectrum_consumer) = spectrum_ring.split();
+
     let runtime = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -237,7 +288,7 @@ pub fn init() -> anyhow::Result<CoreHandle> {
     let tokio_handle = runtime.handle().clone();
 
     let (event_tx, _) = broadcast::channel(EVENT_BROADCAST_CAPACITY);
-    let ctx = Arc::new(CoreContext::new(event_tx, tokio_handle.clone(), producer));
+    let ctx = Arc::new(CoreContext::new(event_tx, tokio_handle.clone(), producer, spectrum_producer));
     ctx.atomics
         .device_sample_rate
         .store(config.sample_rate().0, Ordering::Relaxed);
@@ -258,6 +309,7 @@ pub fn init() -> anyhow::Result<CoreHandle> {
         ctx,
         _runtime: runtime,
         stream: Some(cpal_stream),
+        spectrum_consumer: Some(spectrum_consumer),
     })
 }
 

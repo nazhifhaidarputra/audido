@@ -481,19 +481,25 @@ async fn run_position_watcher(ctx: Arc<CoreContext>) {
             if total_samples > 0 && pos_samples >= total_samples {
                 log::info!("Track finished naturally — advancing queue.");
                 ctx.atomics.is_playing.store(false, Ordering::Release);
-
-                let next_idx = {
+                
+                
+                let (next_idx, current_idx) = {
                     let queue = ctx.queue.lock().expect("queue lock poisoned");
-                    queue.next_index()
+                    (queue.next_index(), queue.current_index)
                 };
-
+                
                 if let Some(idx) = next_idx {
                     let ctx2 = Arc::clone(&ctx);
                     tokio::spawn(async move {
                         crate::modules::playback::play_queue_index_inner(ctx2, idx).await;
                     });
-                } else {
-                    ctx.emit(CoreEvent::Stopped);
+                } else if let Some(idx) = current_idx {
+                    let ctx2 = Arc::clone(&ctx);
+                    tokio::spawn(async move {
+                        crate::modules::playback::play_queue_index_inner(Arc::clone(&ctx2), idx).await;
+                        ctx2.atomics.is_playing.store(false, Ordering::Release);
+                        ctx2.emit(CoreEvent::Stopped);
+                    });
                 }
             }
         }

@@ -207,10 +207,16 @@ fn setup_initial_state(
         if let Some(dir) = target_dir
             && let Ok(items) = browser::get_directory_content(&dir)
         {
-            state.browser.current_dir = dir;
+            state.browser.current_dir = dir.clone();
             state.browser.items = items;
             state.browser.list_state.select(Some(0));
             log::info!("Browser context set to: {:?}", state.browser.current_dir);
+
+            if let Some(proj_dirs) = directories::ProjectDirs::from("com", "Audido", "AudidoTui") {
+                let cache_dir = proj_dirs.cache_dir();
+                let _ = std::fs::create_dir_all(cache_dir);
+                let _ = std::fs::write(cache_dir.join("last_dir.txt"), dir.to_string_lossy().as_ref());
+            }
         }
     }
 

@@ -23,7 +23,15 @@ pub struct BrowserState {
 
 impl BrowserState {
     pub fn new() -> Self {
-        let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let mut current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        if let Some(cache_path) = get_cache_path() {
+            if let Ok(saved_path_str) = std::fs::read_to_string(&cache_path)  {
+                let saved_path = PathBuf::from(saved_path_str.trim());
+                if saved_path.exists() && saved_path.is_dir() {
+                    current_dir = saved_path;
+                }
+            }
+        }
         let items = browser::get_directory_content(&current_dir).unwrap_or_default();
         let mut list_state = ListState::default();
         if !items.is_empty() {
@@ -73,9 +81,13 @@ impl BrowserState {
         if item.is_dir {
             let new_path = item.path.clone();
             if let Ok(new_items) = browser::get_directory_content(&new_path) {
-                self.current_dir = new_path;
+                self.current_dir = new_path.clone();
                 self.items = new_items;
                 self.list_state.select(Some(0));
+
+                if let Some(cache_path) = get_cache_path() {
+                    let _ = std::fs::write(cache_path, new_path.to_string_lossy().as_ref());
+                }
             }
             None
         } else {
@@ -105,3 +117,12 @@ impl BrowserState {
         !matches!(self.dialog, BrowserFileDialog::None)
     }
 }
+
+fn get_cache_path() -> Option<PathBuf> {
+        directories::ProjectDirs::from("com", "Audido", "AudidoTui").map(|proj_dirs| {
+            let cache_dir = proj_dirs.cache_dir();
+            // Ensure the cache directory exists before returning the file path
+            let _ = std::fs::create_dir_all(cache_dir);
+            cache_dir.join("last_dir.txt")
+        })
+    }

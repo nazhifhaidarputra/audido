@@ -7,6 +7,7 @@ use std::{io, path::PathBuf};
 
 use audido_core::browser;
 use audido_core::commands::CoreEvent;
+use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use ratatui::{
     backend::CrosstermBackend,
     crossterm::{
@@ -31,6 +32,7 @@ use state::AppState;
 
 use crate::router::InterceptKeyResult;
 use crate::routes::playback::PlaybackRoute;
+use crate::state::StatefulList;
 
 fn main() -> anyhow::Result<()> {
     if !std::io::stdout().is_terminal() {
@@ -95,7 +97,7 @@ fn run_tui(mut handle: CoreHandle, initial_files: Vec<String>) -> anyhow::Result
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = ratatui::Terminal::new(backend)?;
 
@@ -141,7 +143,7 @@ fn run_tui(mut handle: CoreHandle, initial_files: Vec<String>) -> anyhow::Result
         // Draw UI
         // Drain the spectrum ring buffer first so the visualizer has fresh data.
         state.audio.visualizer_config.update();
-        terminal.draw(|f| ui::draw(f, &state, &router))?;
+        terminal.draw(|f| ui::draw(f, &state, &mut router))?;
 
         // Handle input
         if event::poll(Duration::from_millis(100))?
@@ -173,7 +175,7 @@ fn run_tui(mut handle: CoreHandle, initial_files: Vec<String>) -> anyhow::Result
 
     // Restore terminal
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
 
     Ok(())
@@ -208,8 +210,7 @@ fn setup_initial_state(
             && let Ok(items) = browser::get_directory_content(&dir)
         {
             state.browser.current_dir = dir.clone();
-            state.browser.items = items;
-            state.browser.list_state.select(Some(0));
+            state.browser.files = StatefulList::new(items);
             log::info!("Browser context set to: {:?}", state.browser.current_dir);
 
             if let Some(proj_dirs) = directories::ProjectDirs::from("com", "Audido", "AudidoTui") {
@@ -244,12 +245,10 @@ fn handle_global_keys(
     // Global keys that work regardless of route
     match key {
         KeyCode::Char('q') => {
-            // Graceful shutdown — stop DSP task and let CPAL stream drop naturally
             modules::playback::stop(handle.ctx());
             return Ok(true);
         }
         KeyCode::Tab => {
-            // Cycle through tabs
             let tabs = tab_names();
             let current_name = router.current().name();
             let current_idx = tabs.iter().position(|n| *n == current_name).unwrap_or(0);
@@ -259,11 +258,19 @@ fn handle_global_keys(
             return Ok(false);
         }
         KeyCode::Esc => {
-            // Try to pop from router (go back)
             if router.depth() > 1 {
                 router.pop(state, handle)?;
                 return Ok(false);
             }
+        }
+        KeyCode::BackTab => {
+            let tabs = tab_names();
+            let current_name = router.current().name();
+            let current_idx = tabs.iter().position(|n| *n == current_name).unwrap_or(0);
+            let prev_idx = (( current_idx as i32 - 1) % tabs.len() as i32) as usize;
+            let prev_route = route_for_name(tabs[prev_idx]);
+            router.replace(prev_route, state, handle)?;
+            return Ok(false);
         }
         _ => {}
     }

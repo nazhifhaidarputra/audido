@@ -35,7 +35,7 @@ impl LogRoute {
 }
 
 impl RouteHandler for LogRoute {
-    fn render(&self, frame: &mut Frame, area: Rect, _state: &AppState) {
+    fn render(&mut self, frame: &mut Frame, area: Rect, _state: &AppState) {
         let buffer = LOG_BUFFER.lock().unwrap();
 
         let items: Vec<ListItem> = buffer

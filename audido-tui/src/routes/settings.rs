@@ -25,7 +25,7 @@ use crate::{
 pub struct SettingsRoute;
 
 impl RouteHandler for SettingsRoute {
-    fn render(&self, frame: &mut Frame, area: Rect, state: &AppState) {
+    fn render(&mut self, frame: &mut Frame, area: Rect, state: &AppState) {
         draw_settings_panel(frame, area, state);
     }
 

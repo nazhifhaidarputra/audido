@@ -1,10 +1,66 @@
+use std::marker::PhantomData;
+
 use audido_core::{commands::CoreEvent, queue::LoopMode};
+use ratatui::widgets::ListState;
 use ratatui_image::picker::Picker;
 use strum::IntoEnumIterator;
 
 use crate::{states::{
     AudioState, BrowserState, EqState, QueueState, SettingsState, audio::ImageProtocolWrapper, normalizer::NormalizerState,
 }, themes::AppTheme};
+
+/// A generic stateful list pattern using PhantomData for distinct typing 
+/// and to deduplicate shared list navigation logic.
+#[derive(Debug, Clone)]
+pub struct StatefulList<T, Tag> {
+    pub state: ListState,
+    pub items: Vec<T>,
+    _marker: PhantomData<Tag>,
+}
+
+impl<T, Tag> StatefulList<T, Tag> {
+    pub fn new(items: Vec<T>) -> Self {
+        let mut state = ListState::default();
+        if !items.is_empty() {
+            state.select(Some(0));
+        }
+        Self {
+            state,
+            items,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn next(&mut self) {
+        if self.items.is_empty() {
+            return;
+        }
+        let i = match self.state.selected() {
+            Some(i) => {
+                if i >= self.items.len() - 1 { 0 } else { i + 1 }
+            }
+            None => 0,
+        };
+        self.state.select(Some(i));
+    }
+
+    pub fn prev(&mut self) {
+        if self.items.is_empty() {
+            return;
+        }
+        let i = match self.state.selected() {
+            Some(i) => {
+                if i == 0 { self.items.len() - 1 } else { i - 1 }
+            }
+            None => 0,
+        };
+        self.state.select(Some(i));
+    }
+
+    pub fn selected_item(&self) -> Option<&T> {
+        self.state.selected().and_then(|i| self.items.get(i))
+    }
+}
 
 /// Application state for the TUI
 pub struct AppState {
@@ -52,11 +108,15 @@ impl AppState {
             CoreEvent::Paused => {
                 self.audio.is_playing = false;
                 self.audio.status_message = "Paused".to_string();
+                let bins =  self.audio.visualizer_config.bins_mut();
+                bins.fill(-140.0);
             }
             CoreEvent::Stopped => {
                 self.audio.is_playing = false;
                 self.audio.position = 0.0;
                 self.audio.status_message = "Stopped".to_string();
+                let bins =  self.audio.visualizer_config.bins_mut();
+                bins.fill(-140.0);
             }
             CoreEvent::Loaded(metadata) => {
                 self.audio.duration = metadata.duration;

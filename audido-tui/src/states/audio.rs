@@ -109,6 +109,11 @@ impl AudioVisualizerConfig {
     pub fn bins(&self) -> &[f32] {
         &self.spectrum_bins
     }
+
+    /// Write reference slices view of the current display buffer (one dB value per bin).
+    pub fn bins_mut(&mut self) -> &mut [f32] {
+        &mut self.spectrum_bins
+    }
 }
 
 #[derive(Clone)]

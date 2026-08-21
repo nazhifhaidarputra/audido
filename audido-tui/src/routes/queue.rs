@@ -17,7 +17,7 @@ use crate::{
 pub struct QueueRoute;
 
 impl RouteHandler for QueueRoute {
-    fn render(&self, frame: &mut Frame, area: Rect, state: &AppState) {
+    fn render(&mut self, frame: &mut Frame, area: Rect, state: &AppState) {
         draw_queue_panel(frame, area, state);
     }
 

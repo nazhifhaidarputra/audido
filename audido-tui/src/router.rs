@@ -15,7 +15,7 @@ use ratatui::crossterm::event::KeyCode;
 /// This enables dynamic dispatch and polymorphic behavior
 pub trait RouteHandler: std::fmt::Debug {
     /// Render this route's UI
-    fn render(&self, frame: &mut Frame, area: Rect, state: &AppState);
+    fn render(&mut self, frame: &mut Frame, area: Rect, state: &AppState);
 
     /// Handle keyboard input for this route
     /// Returns Ok(RouteAction) to indicate what should happen next
@@ -218,7 +218,7 @@ pub fn route_for_name(name: &str) -> Box<dyn RouteHandler> {
     match name {
         "Playback" => Box::new(PlaybackRoute),
         "Queue" => Box::new(QueueRoute),
-        "Browser" => Box::new(BrowserRoute),
+        "Browser" => Box::new(BrowserRoute::new()),
         "Settings" => Box::new(SettingsRoute),
         "Log" => Box::new(LogRoute::new()),
         "Equalizer" => Box::new(EqualizerRoute::default()),

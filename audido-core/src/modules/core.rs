@@ -26,16 +26,22 @@ use std::sync::{
 };
 
 /// Default number of FFT frequency bins for the spectrum visualizer.
-pub const DEFAULT_SPECTRUM_BIN_SIZE: usize = 1024;
+pub const DEFAULT_SPECTRUM_BIN_SIZE: usize = 2048;
 
 use anyhow::Context;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossbeam_channel::Sender;
-use ringbuf::{HeapCons, HeapProd, HeapRb, traits::{Consumer, Split}};
+use ringbuf::{
+    HeapCons, HeapProd, HeapRb,
+    traits::{Consumer, Split},
+};
 use tokio::sync::broadcast;
 
 use crate::{
-    commands::{CoreEvent, RealtimeCommand}, dsp::{eq::Equalizer, normalization::Normalizer, spectrum::FftSpectrumEngine}, queue::PlaybackQueue, source::AudioPlaybackData,
+    commands::{CoreEvent, RealtimeCommand},
+    dsp::{eq::Equalizer, normalization::Normalizer, spectrum::FftSpectrumEngine},
+    queue::PlaybackQueue,
+    source::AudioPlaybackData,
 };
 // ================================
 // ========== Constants ===========
@@ -226,7 +232,9 @@ impl CoreHandle {
     ///   bins to produce, so no restart is needed.
     pub fn take_spectrum_consumer(&mut self, bin_size: usize) -> HeapCons<f32> {
         // Update the atomic so the DSP thread picks up the new size.
-        self.ctx.spectrum_bin_size.store(bin_size, Ordering::Relaxed);
+        self.ctx
+            .spectrum_bin_size
+            .store(bin_size, Ordering::Relaxed);
 
         if let Some(consumer) = self.spectrum_consumer.take() {
             // First call: ring was already sized at DEFAULT_SPECTRUM_BIN_SIZE.
@@ -241,7 +249,11 @@ impl CoreHandle {
         // Build a fresh ring sized for the requested bin_size.
         let ring = HeapRb::<f32>::new(bin_size * 8);
         let (producer, consumer) = ring.split();
-        *self.ctx.spectrum_producer.lock().expect("spectrum_producer poisoned") = producer;
+        *self
+            .ctx
+            .spectrum_producer
+            .lock()
+            .expect("spectrum_producer poisoned") = producer;
         consumer
     }
 }
@@ -288,7 +300,12 @@ pub fn init() -> anyhow::Result<CoreHandle> {
     let tokio_handle = runtime.handle().clone();
 
     let (event_tx, _) = broadcast::channel(EVENT_BROADCAST_CAPACITY);
-    let ctx = Arc::new(CoreContext::new(event_tx, tokio_handle.clone(), producer, spectrum_producer));
+    let ctx = Arc::new(CoreContext::new(
+        event_tx,
+        tokio_handle.clone(),
+        producer,
+        spectrum_producer,
+    ));
     ctx.atomics
         .device_sample_rate
         .store(config.sample_rate().0, Ordering::Relaxed);
@@ -324,11 +341,13 @@ fn build_cpal_stream(
     let ctx_for_err = Arc::clone(&ctx);
     let err_fn = move |err| {
         log::error!("CPAL stream error: {}", err);
-        
+
         match err {
             cpal::StreamError::DeviceNotAvailable => {
                 // Signal the runtime to resolve a new host/device and rebuild the graph.
-                log::warn!("Audio device disconnected or stream invalidated. Triggering host resolution...");
+                log::warn!(
+                    "Audio device disconnected or stream invalidated. Triggering host resolution..."
+                );
                 ctx_for_err.emit(CoreEvent::DeviceInvalidated);
             }
             _ => {
@@ -407,17 +426,23 @@ pub fn resolve_host(handle: &mut CoreHandle) -> anyhow::Result<()> {
         let mut ring_lock = handle.ctx.ring_producer.lock().expect("producer poisoned");
         *ring_lock = producer;
     }
-    
-    handle.ctx.atomics.device_sample_rate.store(config.sample_rate().0, Ordering::Relaxed);
+
+    handle
+        .ctx
+        .atomics
+        .device_sample_rate
+        .store(config.sample_rate().0, Ordering::Relaxed);
 
     let new_stream = build_cpal_stream(&device, &config, consumer, Arc::clone(&handle.ctx))?;
-    new_stream.play().context("Failed to start recovered CPAL stream")?;
+    new_stream
+        .play()
+        .context("Failed to start recovered CPAL stream")?;
 
     // Hot-swap the new stream into the handle
     handle.stream = Some(new_stream);
-    
+
     log::info!("Successfully rebuilt CPAL stream and DSP graph.");
-    
+
     Ok(())
 }
 
@@ -426,12 +451,7 @@ pub fn resolve_host(handle: &mut CoreHandle) -> anyhow::Result<()> {
 /// Reads available samples from the SPSC ring buffer consumer. If fewer samples
 /// are available than requested (underrun), the remainder is zero-filled (silence).
 /// Volume scaling is applied here to keep the DSP loop allocation-free.
-fn fill_output(
-    consumer: &mut HeapCons<f32>,
-    output: &mut [f32],
-    ctx: &CoreContext,
-) {
-
+fn fill_output(consumer: &mut HeapCons<f32>, output: &mut [f32], ctx: &CoreContext) {
     if ctx.atomics.clear_buffer.swap(false, Ordering::Acquire) {
         while consumer.pop_slice(output) > 0 {}
     }
@@ -442,9 +462,7 @@ fn fill_output(
     }
 
     let volume = ctx.atomics.get_volume();
-    let read = {
-        consumer.pop_slice(output)
-    };
+    let read = { consumer.pop_slice(output) };
 
     // Apply volume scaling to the portion we received
     for sample in &mut output[..read] {
@@ -481,13 +499,12 @@ async fn run_position_watcher(ctx: Arc<CoreContext>) {
             if total_samples > 0 && pos_samples >= total_samples {
                 log::info!("Track finished naturally — advancing queue.");
                 ctx.atomics.is_playing.store(false, Ordering::Release);
-                
-                
+
                 let (next_idx, current_idx) = {
                     let queue = ctx.queue.lock().expect("queue lock poisoned");
                     (queue.next_index(), queue.current_index)
                 };
-                
+
                 if let Some(idx) = next_idx {
                     let ctx2 = Arc::clone(&ctx);
                     tokio::spawn(async move {
@@ -496,7 +513,8 @@ async fn run_position_watcher(ctx: Arc<CoreContext>) {
                 } else if let Some(idx) = current_idx {
                     let ctx2 = Arc::clone(&ctx);
                     tokio::spawn(async move {
-                        crate::modules::playback::play_queue_index_inner(Arc::clone(&ctx2), idx).await;
+                        crate::modules::playback::play_queue_index_inner(Arc::clone(&ctx2), idx)
+                            .await;
                         ctx2.atomics.is_playing.store(false, Ordering::Release);
                         ctx2.emit(CoreEvent::Stopped);
                     });

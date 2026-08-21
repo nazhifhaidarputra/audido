@@ -426,7 +426,7 @@ impl EqualizerRoute {
 }
 
 impl RouteHandler for EqualizerRoute {
-    fn render(&self, frame: &mut Frame, area: Rect, state: &AppState) {
+    fn render(&mut self, frame: &mut Frame, area: Rect, state: &AppState) {
         draw_eq_panel(
             frame,
             area,

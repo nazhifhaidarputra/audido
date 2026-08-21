@@ -9,10 +9,8 @@ use ratatui::{
 use crate::state::AppState;
 use crate::states::{AudioState, QueueState};
 
-// pub Struct 
-
 /// Draw the TUI interface
-pub fn draw(f: &mut Frame, state: &AppState, router: &crate::router::Router) {
+pub fn draw(f: &mut Frame, state: &AppState, router: &mut crate::router::Router) {
         // Main vertical split: Top Navigation (top) and Main Content (bottom)
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -70,7 +68,7 @@ fn draw_navigation_bar(f: &mut Frame, area: Rect, state: &AppState, router: &cra
 }
 
 /// Draw the main content area based on active route
-fn draw_main_content(f: &mut Frame, area: Rect, state: &AppState, router: &crate::router::Router) {
+fn draw_main_content(f: &mut Frame, area: Rect, state: &AppState, router: &mut crate::router::Router) {
     // Split the main area into Content (top) and Footer (bottom)
     // Footer contains Controls (3 lines) and Status (3 lines)
     let chunks = Layout::default()
@@ -87,7 +85,7 @@ fn draw_main_content(f: &mut Frame, area: Rect, state: &AppState, router: &crate
     let status_area = chunks[2];
 
     // Draw the specific panel via the router
-    router.current().render(f, content_area, state);
+    router.current_mut().render(f, content_area, state);
 
     // Draw global footers on every tab
     draw_controls(f, controls_area, state, router);
@@ -95,8 +93,9 @@ fn draw_main_content(f: &mut Frame, area: Rect, state: &AppState, router: &crate
 }
 
 /// Draw the controls help section
-fn draw_controls(f: &mut Frame, area: Rect, _state: &AppState, router: &crate::router::Router) {
+fn draw_controls(f: &mut Frame, area: Rect, state: &AppState, router: &crate::router::Router) {
     let route_name = router.current().name();
+    let theme = &state.theme;
     let controls = match route_name {
         "Playback" => {
             vec![
@@ -191,7 +190,7 @@ fn draw_controls(f: &mut Frame, area: Rect, _state: &AppState, router: &crate::r
     };
 
     let paragraph = Paragraph::new(Line::from(controls))
-        .block(Block::default().borders(Borders::ALL).title(" Controls "));
+        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(theme.foreground_color)).title(" Controls "));
 
     f.render_widget(paragraph, area);
 }
@@ -253,8 +252,6 @@ pub fn draw_generic_dialog(f: &mut Frame, area: Rect, props: DialogProperties) {
     let inner_area = block.inner(dialog_area);
     f.render_widget(block, dialog_area);
 
-    // Render the Options
-    // We map the raw strings into styled Lines based on the selected_index
     let text: Vec<Line> = props
         .options
         .iter()

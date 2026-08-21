@@ -29,3 +29,4 @@ ringbuf = "0.5.1"
 # CPAL: low-level cross-platform audio I/O for the output stream
 cpal = "0.15"
 apodize = "1.0.0"
+yt-dlp = "2.8.3"

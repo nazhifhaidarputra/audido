@@ -1,7 +1,21 @@
-use std::path::PathBuf;
+use std::{marker::PhantomData, path::PathBuf};
 
 use audido_core::browser::{self, FileEntry};
 use ratatui::widgets::ListState;
+
+use crate::state::StatefulList;
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum BrowserSource {
+    #[default]
+    LocalFiles,
+    YouTube,
+    Playlists,
+}
+
+/// Type tags for PhantomData
+#[derive(Debug, Clone)] pub struct FileItemTag;
+#[derive(Debug, Clone)] pub struct SourceItemTag;
 
 /// Dialog shown when selecting a file in browser
 #[derive(Debug, Clone, Default)]
@@ -12,12 +26,19 @@ pub enum BrowserFileDialog {
     Open { path: PathBuf, selected: usize },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ActiveBrowserPane {
+    Sources,
+    #[default]
+    Files,
+}
+
 /// Browser state for file navigation
 #[derive(Debug, Clone)]
 pub struct BrowserState {
     pub current_dir: PathBuf,
-    pub items: Vec<FileEntry>,
-    pub list_state: ListState,
+    pub files: StatefulList<FileEntry, FileItemTag>,
+    pub sources: StatefulList<BrowserSource, SourceItemTag>,
     pub dialog: BrowserFileDialog,
 }
 
@@ -25,76 +46,67 @@ impl BrowserState {
     pub fn new() -> Self {
         let mut current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         if let Some(cache_path) = get_cache_path() {
-            if let Ok(saved_path_str) = std::fs::read_to_string(&cache_path)  {
+            if let Ok(saved_path_str) = std::fs::read_to_string(&cache_path) {
                 let saved_path = PathBuf::from(saved_path_str.trim());
                 if saved_path.exists() && saved_path.is_dir() {
                     current_dir = saved_path;
                 }
             }
         }
-        let items = browser::get_directory_content(&current_dir).unwrap_or_default();
-        let mut list_state = ListState::default();
-        if !items.is_empty() {
-            list_state.select(Some(0));
-        }
+        
+        let file_items = browser::get_directory_content(&current_dir).unwrap_or_default();
+        let source_items = vec![
+            BrowserSource::LocalFiles,
+            BrowserSource::YouTube,
+            BrowserSource::Playlists,
+        ];
 
         Self {
             current_dir,
-            items,
-            list_state,
+            files: StatefulList::new(file_items),
+            sources: StatefulList::new(source_items),
             dialog: BrowserFileDialog::None,
         }
     }
 
-    pub fn next(&mut self) {
-        let i = match self.list_state.selected() {
-            Some(i) => {
-                if i >= self.items.len() - 1 {
-                    0
-                } else {
-                    i + 1
-                }
-            }
-            None => 0,
-        };
-        self.list_state.select(Some(i));
-    }
 
-    pub fn prev(&mut self) {
-        let i = match self.list_state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.items.len() - 1
-                } else {
-                    i - 1
-                }
-            }
-            None => 0,
-        };
-        self.list_state.select(Some(i));
-    }
-
-    /// Enter selected directory or return PathBuf if it's a file
-    pub fn enter(&mut self) -> Option<PathBuf> {
-        let i = self.list_state.selected()?;
-        let item = &self.items.get(i)?;
-        if item.is_dir {
-            let new_path = item.path.clone();
-            if let Ok(new_items) = browser::get_directory_content(&new_path) {
-                self.current_dir = new_path.clone();
-                self.items = new_items;
-                self.list_state.select(Some(0));
-
-                if let Some(cache_path) = get_cache_path() {
-                    let _ = std::fs::write(cache_path, new_path.to_string_lossy().as_ref());
-                }
-            }
-            None
-        } else {
-            Some(item.path.clone())
+pub fn next(&mut self, active_pane: ActiveBrowserPane) {
+        match active_pane {
+            ActiveBrowserPane::Sources => self.sources.next(),
+            ActiveBrowserPane::Files => self.files.next(),
         }
     }
 
+    pub fn prev(&mut self, active_pane: ActiveBrowserPane) {
+        match active_pane {
+            ActiveBrowserPane::Sources => self.sources.prev(),
+            ActiveBrowserPane::Files => self.files.prev(),
+        }
+    }
+
+    /// Enter selected directory or return PathBuf if it's a file
+    pub fn enter(&mut self, active_pane: ActiveBrowserPane) -> Option<PathBuf> {
+        match active_pane {
+            ActiveBrowserPane::Sources => None,
+            ActiveBrowserPane::Files => {
+                let item = self.files.selected_item()?;
+                if item.is_dir {
+                    let new_path = item.path.clone();
+                    if let Ok(new_items) = browser::get_directory_content(&new_path) {
+                        self.current_dir = new_path.clone();
+                        self.files = StatefulList::new(new_items);
+
+                        if let Some(cache_path) = get_cache_path() {
+                            let _ = std::fs::write(cache_path, new_path.to_string_lossy().as_ref());
+                        }
+                    }
+                    None
+                } else {
+                    Some(item.path.clone())
+                }
+            }
+        }
+    }
     /// Open the browser file dialog for a given path
     pub fn open_dialog(&mut self, path: PathBuf) {
         self.dialog = BrowserFileDialog::Open { path, selected: 0 };
@@ -115,6 +127,11 @@ impl BrowserState {
     /// Check if dialog is open
     pub fn is_dialog_open(&self) -> bool {
         !matches!(self.dialog, BrowserFileDialog::None)
+    }
+
+    /// Convenience getter to maintain API surface for the currently selected source
+    pub fn current_source(&self) -> &BrowserSource {
+        self.sources.selected_item().unwrap_or(&BrowserSource::LocalFiles)
     }
 }
 

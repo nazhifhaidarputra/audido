@@ -1,0 +1,11 @@
+Package: audido
+Version: @VERSION@
+Section: sound
+Priority: optional
+Architecture: amd64
+Maintainer: Audido contributors <noreply@github.com>
+Homepage: https://github.com/nazhifhaidarputra/audido
+Depends: libc6, libgcc-s1, libasound2, ffmpeg, yt-dlp
+Description: terminal-based audio player
+ Audido is a terminal user interface for local audio playback, queue
+ management, YouTube playback, and DSP-based audio processing.

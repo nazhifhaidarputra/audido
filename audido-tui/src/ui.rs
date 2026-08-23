@@ -11,7 +11,7 @@ use crate::states::{AudioState, QueueState};
 
 /// Draw the TUI interface
 pub fn draw(f: &mut Frame, state: &AppState, router: &mut crate::router::Router) {
-        // Main vertical split: Top Navigation (top) and Main Content (bottom)
+    // Main vertical split: Top Navigation (top) and Main Content (bottom)
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
@@ -26,13 +26,18 @@ pub fn draw(f: &mut Frame, state: &AppState, router: &mut crate::router::Router)
 }
 
 /// Draw navigation menu vertically on the top
-fn draw_navigation_bar(f: &mut Frame, area: Rect, state: &AppState, router: &crate::router::Router) {
+fn draw_navigation_bar(
+    f: &mut Frame,
+    area: Rect,
+    state: &AppState,
+    router: &crate::router::Router,
+) {
     let accent = state.theme.foreground_color;
 
     let block = Block::default()
-    .title(" Navigation ")
-    .borders(Borders::ALL)
-    .border_style(Style::default().fg(accent));
+        .title(" Navigation ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(accent));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -45,15 +50,13 @@ fn draw_navigation_bar(f: &mut Frame, area: Rect, state: &AppState, router: &cra
         let is_active = *tab_name == current_route_name;
         let prefix = if is_active { "▶ " } else { "  " };
         let style = if is_active {
-            Style::default()
-                .fg(accent)
-                .add_modifier(Modifier::BOLD)
+            Style::default().fg(accent).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::Gray)
         };
-        
+
         nav_spans.push(Span::styled(format!("{}{}", prefix, tab_name), style));
-        
+
         // Add a separator between tabs
         if i < tab_names.len() - 1 {
             nav_spans.push(Span::raw("  |  "));
@@ -61,14 +64,18 @@ fn draw_navigation_bar(f: &mut Frame, area: Rect, state: &AppState, router: &cra
     }
 
     // Create a single Line from the spans to display horizontally
-    let paragraph = Paragraph::new(Line::from(nav_spans))
-        .alignment(Alignment::Center);
-        
+    let paragraph = Paragraph::new(Line::from(nav_spans)).alignment(Alignment::Center);
+
     f.render_widget(paragraph, inner);
 }
 
 /// Draw the main content area based on active route
-fn draw_main_content(f: &mut Frame, area: Rect, state: &AppState, router: &mut crate::router::Router) {
+fn draw_main_content(
+    f: &mut Frame,
+    area: Rect,
+    state: &AppState,
+    router: &mut crate::router::Router,
+) {
     // Split the main area into Content (top) and Footer (bottom)
     // Footer contains Controls (3 lines) and Status (3 lines)
     let chunks = Layout::default()
@@ -99,15 +106,15 @@ fn draw_controls(f: &mut Frame, area: Rect, state: &AppState, router: &crate::ro
     let controls = match route_name {
         "Playback" => {
             vec![
-                Span::styled("[Space]", Style::default().fg(Color::Yellow)),
+                Span::styled("[Space]", Style::default().fg(theme.font_color)),
                 Span::raw(" Play/Pause  "),
-                Span::styled("[N/P]", Style::default().fg(Color::Yellow)),
+                Span::styled("[N/P]", Style::default().fg(theme.font_color)),
                 Span::raw(" Next/Prev  "),
-                Span::styled("[L]", Style::default().fg(Color::Yellow)),
+                Span::styled("[L]", Style::default().fg(theme.font_color)),
                 Span::raw(" Loop  "),
-                Span::styled("[←/→]", Style::default().fg(Color::Yellow)),
+                Span::styled("[←/→]", Style::default().fg(theme.font_color)),
                 Span::raw(" Seek  "),
-                Span::styled("[Tab]", Style::default().fg(Color::Magenta)),
+                Span::styled("[Tab]", Style::default().fg(theme.font_color)),
                 Span::raw(" Switch Tab  "),
                 Span::styled("[Q]", Style::default().fg(Color::Red)),
                 Span::raw(" Quit"),
@@ -115,13 +122,13 @@ fn draw_controls(f: &mut Frame, area: Rect, state: &AppState, router: &crate::ro
         }
         "Queue" => {
             vec![
-                Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
+                Span::styled("[↑/↓]", Style::default().fg(theme.font_color)),
                 Span::raw(" Navigate  "),
-                Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
+                Span::styled("[Enter]", Style::default().fg(theme.font_color)),
                 Span::raw(" Play  "),
-                Span::styled("[N/P]", Style::default().fg(Color::Yellow)),
+                Span::styled("[N/P]", Style::default().fg(theme.font_color)),
                 Span::raw(" Next/Prev  "),
-                Span::styled("[L]", Style::default().fg(Color::Yellow)),
+                Span::styled("[L]", Style::default().fg(theme.font_color)),
                 Span::raw(" Loop  "),
                 Span::styled("[Tab]", Style::default().fg(Color::Magenta)),
                 Span::raw(" Switch Tab  "),
@@ -131,7 +138,7 @@ fn draw_controls(f: &mut Frame, area: Rect, state: &AppState, router: &crate::ro
         }
         "Log" => {
             vec![
-                Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
+                Span::styled("[↑/↓]", Style::default().fg(theme.font_color)),
                 Span::raw(" Scroll  "),
                 Span::styled("[Tab]", Style::default().fg(Color::Magenta)),
                 Span::raw(" Switch Tab  "),
@@ -141,9 +148,9 @@ fn draw_controls(f: &mut Frame, area: Rect, state: &AppState, router: &crate::ro
         }
         "Browser" | "File Options" => {
             vec![
-                Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
+                Span::styled("[↑/↓]", Style::default().fg(theme.font_color)),
                 Span::raw(" Nav  "),
-                Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
+                Span::styled("[Enter]", Style::default().fg(theme.font_color)),
                 Span::raw(" Select  "),
                 Span::styled("[Tab]", Style::default().fg(Color::Magenta)),
                 Span::raw(" Switch Tab  "),
@@ -153,9 +160,9 @@ fn draw_controls(f: &mut Frame, area: Rect, state: &AppState, router: &crate::ro
         }
         "Settings" => {
             vec![
-                Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
+                Span::styled("[↑/↓]", Style::default().fg(theme.font_color)),
                 Span::raw(" Navigate  "),
-                Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
+                Span::styled("[Enter]", Style::default().fg(theme.font_color)),
                 Span::raw(" Select  "),
                 Span::styled("[Tab]", Style::default().fg(Color::Magenta)),
                 Span::raw(" Switch Tab  "),
@@ -165,15 +172,15 @@ fn draw_controls(f: &mut Frame, area: Rect, state: &AppState, router: &crate::ro
         }
         "Equalizer" => {
             vec![
-                Span::styled("[←/→]", Style::default().fg(Color::Yellow)),
+                Span::styled("[←/→]", Style::default().fg(theme.font_color)),
                 Span::raw(" Focus  "),
-                Span::styled("[T]", Style::default().fg(Color::Yellow)),
+                Span::styled("[T]", Style::default().fg(theme.font_color)),
                 Span::raw(" Toggle  "),
-                Span::styled("[M]", Style::default().fg(Color::Yellow)),
+                Span::styled("[M]", Style::default().fg(theme.font_color)),
                 Span::raw(" Mode  "),
-                Span::styled("[A]", Style::default().fg(Color::Yellow)),
+                Span::styled("[A]", Style::default().fg(theme.font_color)),
                 Span::raw(" Add  "),
-                Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
+                Span::styled("[Esc]", Style::default().fg(theme.font_color)),
                 Span::raw(" Back  "),
                 Span::styled("[Q]", Style::default().fg(Color::Red)),
                 Span::raw(" Quit"),
@@ -189,8 +196,12 @@ fn draw_controls(f: &mut Frame, area: Rect, state: &AppState, router: &crate::ro
         }
     };
 
-    let paragraph = Paragraph::new(Line::from(controls))
-        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(theme.foreground_color)).title(" Controls "));
+    let paragraph = Paragraph::new(Line::from(controls)).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme.foreground_color))
+            .title(" Controls "),
+    );
 
     f.render_widget(paragraph, area);
 }

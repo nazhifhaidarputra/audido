@@ -5,21 +5,29 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 
 use crate::{
-    commands::CoreEvent,
-    modules::core::CoreContext,
-    modules::playback::play_queue_index_inner,
-    queue::LoopMode,
+    commands::CoreEvent, modules::core::CoreContext, modules::playback::play_queue_index_inner,
+    queue::LoopMode, source::AudioSource,
 };
 
 pub async fn add_to_queue(ctx: Arc<CoreContext>, paths: Vec<String>) {
+    let sources = paths
+        .into_iter()
+        .map(|path| AudioSource::Local { path: path.into() })
+        .collect();
+    add_sources_to_queue(ctx, sources).await;
+}
+
+pub async fn add_sources_to_queue(ctx: Arc<CoreContext>, sources: Vec<AudioSource>) {
     let was_empty;
-    let is_playing = ctx.atomics.is_playing.load(std::sync::atomic::Ordering::Relaxed);
+    let is_playing = ctx
+        .atomics
+        .is_playing
+        .load(std::sync::atomic::Ordering::Relaxed);
 
     {
         let mut queue = ctx.queue.lock().expect("queue poisoned");
         was_empty = queue.items.is_empty();
-        let path_bufs: Vec<std::path::PathBuf> = paths.into_iter().map(Into::into).collect();
-        queue.add(path_bufs);
+        queue.add_sources(sources);
     }
 
     emit_queue_update(&ctx);
@@ -29,7 +37,7 @@ pub async fn add_to_queue(ctx: Arc<CoreContext>, paths: Vec<String>) {
     }
     log::info!("Items added to queue.");
 }
-pub fn remove_from_queue(ctx: Arc<CoreContext>, id: usize) -> JoinHandle<()>  {
+pub fn remove_from_queue(ctx: Arc<CoreContext>, id: usize) -> JoinHandle<()> {
     let handle = ctx.tokio_handle.clone();
     handle.spawn(async move {
         {
@@ -39,7 +47,7 @@ pub fn remove_from_queue(ctx: Arc<CoreContext>, id: usize) -> JoinHandle<()>  {
         emit_queue_update(&ctx);
         log::info!("Removed queue item id={}", id);
     })
-} 
+}
 
 pub async fn clear_queue(ctx: Arc<CoreContext>) {
     crate::modules::playback::stop_inner(&ctx).await;
@@ -50,15 +58,19 @@ pub async fn clear_queue(ctx: Arc<CoreContext>) {
     }
 
     *ctx.current_audio.lock().expect("current_audio poisoned") = None;
-    ctx.atomics.total_samples.store(0, std::sync::atomic::Ordering::Release);
-    ctx.atomics.position_samples.store(0, std::sync::atomic::Ordering::Release);
+    ctx.atomics
+        .total_samples
+        .store(0, std::sync::atomic::Ordering::Release);
+    ctx.atomics
+        .position_samples
+        .store(0, std::sync::atomic::Ordering::Release);
 
     emit_queue_update(&ctx);
     ctx.emit(CoreEvent::Stopped);
     log::info!("Queue cleared.");
 }
 
-pub fn play_index(ctx: Arc<CoreContext>, index: usize) -> JoinHandle<()>  {
+pub fn play_index(ctx: Arc<CoreContext>, index: usize) -> JoinHandle<()> {
     let handle = ctx.tokio_handle.clone();
     handle.spawn(async move {
         play_queue_index_inner(ctx, index).await;
@@ -116,11 +128,15 @@ pub(crate) fn emit_queue_update(ctx: &CoreContext) {
     ctx.emit(CoreEvent::QueueUpdated(items));
 }
 
-/// Play immediately the selected song.
+/// Play a local path immediately.
 /// 1. Stopping the playback
 /// 2. Clears the queue
-/// 3. Add the [path] song to the queue
+/// 3. Add the path to the queue
 pub async fn play_immediately(ctx: Arc<CoreContext>, path: String) {
+    play_source_immediately(ctx, AudioSource::Local { path: path.into() }).await;
+}
+
+pub async fn play_source_immediately(ctx: Arc<CoreContext>, source: AudioSource) {
     crate::modules::playback::stop_inner(&ctx).await;
 
     {
@@ -129,12 +145,16 @@ pub async fn play_immediately(ctx: Arc<CoreContext>, path: String) {
     }
 
     *ctx.current_audio.lock().expect("current_audio poisoned") = None;
-    ctx.atomics.total_samples.store(0, std::sync::atomic::Ordering::Release);
-    ctx.atomics.position_samples.store(0, std::sync::atomic::Ordering::Release);
+    ctx.atomics
+        .total_samples
+        .store(0, std::sync::atomic::Ordering::Release);
+    ctx.atomics
+        .position_samples
+        .store(0, std::sync::atomic::Ordering::Release);
 
     {
         let mut queue = ctx.queue.lock().expect("queue poisoned");
-        queue.add(vec![std::path::PathBuf::from(path)]);
+        queue.add_sources(vec![source]);
     }
 
     emit_queue_update(&ctx);

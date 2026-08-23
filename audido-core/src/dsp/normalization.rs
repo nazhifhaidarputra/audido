@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Normalization mode: Peak or RMS-based
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,10 +71,7 @@ impl Normalizer {
     /// Calculate peak normalization gain
     /// Finds the maximum absolute value and calculates gain to reach target level
     fn calculate_peak_gain(buffer: &[f32], target_level: f32) -> f32 {
-        let peak = buffer
-            .iter()
-            .map(|s| s.abs())
-            .fold(0.0f32, |a, b| a.max(b));
+        let peak = buffer.iter().map(|s| s.abs()).fold(0.0f32, |a, b| a.max(b));
 
         if peak > 0.0 && peak < target_level {
             target_level / peak
@@ -123,15 +120,13 @@ impl Normalizer {
 
         // Calculate gain based on mode
         let gain = match self.mode {
-            NormalizationMode::Peak => {
-                Self::calculate_peak_gain(buffer, self.target_level)
-            }
+            NormalizationMode::Peak => Self::calculate_peak_gain(buffer, self.target_level),
             NormalizationMode::RMS => {
                 let new_rms_gain =
                     Self::calculate_rms_gain(buffer, self.target_level, self.headroom_db);
                 // Apply exponential moving average for smooth gain transitions
-                self.last_rms = self.rms_smoothing * new_rms_gain
-                    + (1.0 - self.rms_smoothing) * self.last_rms;
+                self.last_rms =
+                    self.rms_smoothing * new_rms_gain + (1.0 - self.rms_smoothing) * self.last_rms;
                 self.last_rms
             }
         };

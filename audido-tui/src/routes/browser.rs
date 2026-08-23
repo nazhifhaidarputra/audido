@@ -1,21 +1,29 @@
 use std::collections::BTreeMap;
 
 use audido_core::modules::{self, core::CoreHandle};
+use audido_core::{browser::FileEntry, modules::youtube::ytdlp::PlaylistEntry};
 use ratatui::{
     Frame,
     buffer::Buffer,
     crossterm::event::KeyCode,
-    layout::{Direction, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, StatefulWidget},
+    widgets::{Block, Borders, List, ListItem, Paragraph, StatefulWidget, Widget},
 };
 use ratatui_hypertile::{
     Hypertile, HypertileAction, HypertileWidget, PaneId, PaneSnapshot, Towards,
 };
 
 use crate::{
-    router::{RouteAction, RouteHandler}, routes::playback::PlaybackRoute, state::AppState, states::{BrowserFileDialog, browser::{ActiveBrowserPane, BrowserSource}}, ui::{DialogProperties, draw_generic_dialog},
+    router::{RouteAction, RouteHandler},
+    routes::playback::PlaybackRoute,
+    state::AppState,
+    states::{
+        BrowserFileDialog,
+        browser::{ActiveBrowserPane, BrowserSource, YoutubeBrowserFocus},
+    },
+    ui::{DialogProperties, draw_generic_dialog},
 };
 
 /// Browser route - handles both browsing and file dialog as internal state
@@ -48,22 +56,38 @@ impl BrowserRoute {
 
         f.render_stateful_widget(hypertile_widget, area, &mut self.layout);
     }
+
+    fn active_pane(&self) -> ActiveBrowserPane {
+        match self
+            .layout
+            .focused_pane()
+            .and_then(|id| self.labels.get(&id))
+            .map(String::as_str)
+        {
+            Some("sources") => ActiveBrowserPane::Sources,
+            _ => ActiveBrowserPane::Entries,
+        }
+    }
+
+    fn youtube_content_is_active(&self, state: &AppState) -> bool {
+        !state.browser.is_dialog_open()
+            && self.active_pane() == ActiveBrowserPane::Entries
+            && state.browser.current_source() == &BrowserSource::YouTube
+    }
 }
 
 impl RouteHandler for BrowserRoute {
     fn render(&mut self, frame: &mut Frame, area: Rect, state: &AppState) {
         self.draw_browser_panel(frame, area, state);
 
-        if let BrowserFileDialog::Open { path, selected } = &state.browser.dialog {
-            let filename = path
-                .file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| "Unknown File".to_string());
-
+        if let BrowserFileDialog::Open {
+            title, selected, ..
+        } = &state.browser.dialog
+        {
             let options = vec!["Play Now", "Add to Queue"];
 
             let props = DialogProperties {
-                title: &filename,
+                title,
                 options,
                 selected_index: *selected,
             };
@@ -85,22 +109,22 @@ impl RouteHandler for BrowserRoute {
                     state.browser.dialog_toggle();
                 }
                 KeyCode::Enter => {
-                    if let BrowserFileDialog::Open { path, selected } = &state.browser.dialog {
-                        let path_str = path.to_string_lossy().to_string();
+                    if let BrowserFileDialog::Open {
+                        source, selected, ..
+                    } = &state.browser.dialog
+                    {
+                        let source = source.clone();
+                        let selected = *selected;
                         let ctx = handle.ctx();
 
-                        if *selected == 0 {
-                            // Play Now — clear queue, add file, auto-play
-                            let ctx_clone = ctx.clone();
-                            let path_clone = path_str.clone();
-                            handle.spawn(modules::queue::play_immediately(ctx_clone, path_clone));
+                        if selected == 0 {
+                            handle.spawn(modules::queue::play_source_immediately(ctx, source));
                             state.browser.close_dialog();
                             return Ok(RouteAction::Replace(Box::new(PlaybackRoute)));
                         } else {
-                            // Add to Queue only
-                            let ctx_clone = ctx.clone();
-                            ctx.tokio_handle.spawn(async move {
-                                modules::queue::add_to_queue(ctx_clone, vec![path_str]).await;
+                            let tokio_handle = ctx.tokio_handle.clone();
+                            tokio_handle.spawn(async move {
+                                modules::queue::add_sources_to_queue(ctx, vec![source]).await;
                             });
                             state.browser.close_dialog();
                         }
@@ -112,11 +136,69 @@ impl RouteHandler for BrowserRoute {
                 _ => {}
             }
         } else {
-            // Dynamically resolve the active pane from the layout
-            let active_pane = match self.layout.focused_pane().and_then(|id| self.labels.get(&id)).map(|s| s.as_str()) {
-                Some("sources") => ActiveBrowserPane::Sources,
-                _ => ActiveBrowserPane::Files, // Default to content area
-            };
+            let active_pane = self.active_pane();
+
+            if self.youtube_content_is_active(state) {
+                match key {
+                    KeyCode::Char(character) => {
+                        state.browser.youtube_focus = YoutubeBrowserFocus::Search;
+                        state.browser.search_query.push(character);
+                        return Ok(RouteAction::None);
+                    }
+                    KeyCode::Backspace => {
+                        state.browser.youtube_focus = YoutubeBrowserFocus::Search;
+                        state.browser.search_query.pop();
+                        return Ok(RouteAction::None);
+                    }
+                    KeyCode::Delete => {
+                        state.browser.youtube_focus = YoutubeBrowserFocus::Search;
+                        state.browser.search_query.clear();
+                        return Ok(RouteAction::None);
+                    }
+                    KeyCode::Enter => {
+                        match state.browser.youtube_focus {
+                            YoutubeBrowserFocus::Search => {
+                                state.browser.search_youtube(handle.ctx());
+                            }
+                            YoutubeBrowserFocus::Entries => {
+                                state.browser.open_selected_youtube_dialog();
+                            }
+                        }
+                        return Ok(RouteAction::None);
+                    }
+                    KeyCode::Down => {
+                        if state.browser.youtube_focus == YoutubeBrowserFocus::Search {
+                            if !state.browser.entries.items.is_empty() {
+                                state.browser.youtube_focus = YoutubeBrowserFocus::Entries;
+                            }
+                        } else {
+                            state.browser.next(ActiveBrowserPane::Entries);
+                        }
+                        return Ok(RouteAction::None);
+                    }
+                    KeyCode::Up => {
+                        if state.browser.youtube_focus == YoutubeBrowserFocus::Entries {
+                            state.browser.prev(ActiveBrowserPane::Entries);
+                        }
+                        return Ok(RouteAction::None);
+                    }
+                    KeyCode::Esc => {
+                        if state.browser.youtube_focus == YoutubeBrowserFocus::Entries {
+                            state.browser.youtube_focus = YoutubeBrowserFocus::Search;
+                            return Ok(RouteAction::None);
+                        }
+                    }
+                    KeyCode::PageDown => {
+                        state.browser.next_youtube_page(handle.ctx());
+                        return Ok(RouteAction::None);
+                    }
+                    KeyCode::PageUp => {
+                        state.browser.previous_youtube_page(handle.ctx());
+                        return Ok(RouteAction::None);
+                    }
+                    _ => {}
+                }
+            }
 
             match key {
                 KeyCode::Up => state.browser.prev(active_pane.clone()),
@@ -136,7 +218,9 @@ impl RouteHandler for BrowserRoute {
                 }
 
                 KeyCode::Enter => {
-                    if active_pane == ActiveBrowserPane::Files {
+                    if active_pane == ActiveBrowserPane::Entries
+                        && state.browser.current_source() == &BrowserSource::LocalFiles
+                    {
                         if let Some(path) = state.browser.enter(active_pane) {
                             state.browser.open_dialog(path);
                         }
@@ -155,6 +239,36 @@ impl RouteHandler for BrowserRoute {
 
     fn name(&self) -> &str {
         "Browser"
+    }
+
+    fn intercept_global_key(
+        &mut self,
+        key: KeyCode,
+        state: &mut AppState,
+        handle: &CoreHandle,
+    ) -> crate::router::InterceptKeyResult {
+        if state.browser.is_dialog_open() {
+            let _ = self.handle_input(key, state, handle);
+            return crate::router::InterceptKeyResult::Handled;
+        }
+
+        if self.youtube_content_is_active(state)
+            && matches!(
+                key,
+                KeyCode::Char(_)
+                    | KeyCode::Backspace
+                    | KeyCode::Delete
+                    | KeyCode::Enter
+                    | KeyCode::PageDown
+                    | KeyCode::PageUp
+                    | KeyCode::Esc
+            )
+        {
+            let _ = self.handle_input(key, state, handle);
+            crate::router::InterceptKeyResult::Handled
+        } else {
+            crate::router::InterceptKeyResult::Ignored
+        }
     }
 }
 
@@ -176,81 +290,251 @@ fn draw_browser_panel_inside_hypertile(
     let browser_state = &state.browser;
 
     if pane_label == Some("sources") {
-        let block = Block::default()
-            .title(" Sources ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(border_color));
-
-        let items: Vec<ListItem> = browser_state
-            .sources
-            .items
-            .iter()
-            .map(|source| {
-                let text = match source {
-                    BrowserSource::LocalFiles => "🖫 Local Files",
-                    BrowserSource::YouTube => "🌐 YouTube",
-                    BrowserSource::Playlists => "📝 Playlists",
-                };
-                ListItem::new(Line::from(vec![
-                    Span::raw("   "),
-                    Span::raw(text),
-                ]))
-            })
-            .collect();
-
-        let list = List::new(items)
-            .block(block)
-            .highlight_style(
-                Style::default()
-                    .fg(accent)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .highlight_symbol(">> ");
-
-        let mut list_state = browser_state.sources.state.clone();
-        StatefulWidget::render(list, pane.rect, buf, &mut list_state);
+        draw_source_panel(state, pane.rect, buf, accent, border_color);
     } else {
-        let title = if browser_state.current_dir.as_os_str().is_empty() {
-            " Browser: System Drives ".to_string()
-        } else {
-            format!(" Browser: {} ", browser_state.current_dir.to_string_lossy())
-        };
+        match browser_state.current_source() {
+            BrowserSource::LocalFiles => {
+                draw_local_browser_panel(state, pane.rect, buf, border_color)
+            }
+            BrowserSource::YouTube => {
+                draw_youtube_browser_panel(state, pane.rect, buf, border_color)
+            }
+            BrowserSource::Playlists => draw_empty_provider_panel(
+                " Playlists ",
+                "Playlist browsing is not implemented yet",
+                pane.rect,
+                buf,
+                border_color,
+            ),
+        }
+    }
+}
 
-        let block = Block::default()
-            .title(title)
+fn draw_source_panel(
+    state: &AppState,
+    area: Rect,
+    buf: &mut Buffer,
+    accent: Color,
+    border_color: Color,
+) {
+    let browser_state = &state.browser;
+    let block = Block::default()
+        .title(" Sources ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color));
+
+    let items: Vec<ListItem> = browser_state
+        .sources
+        .items
+        .iter()
+        .map(|source| {
+            let text = match source {
+                BrowserSource::LocalFiles => "🖫 Local Files",
+                BrowserSource::YouTube => "🌐 YouTube",
+                BrowserSource::Playlists => "📝 Playlists",
+            };
+            ListItem::new(Line::from(vec![Span::raw("   "), Span::raw(text)]))
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(Style::default().fg(accent).add_modifier(Modifier::BOLD))
+        .highlight_symbol(">> ");
+
+    let mut list_state = browser_state.sources.state.clone();
+    StatefulWidget::render(list, area, buf, &mut list_state);
+}
+
+fn draw_local_browser_panel(state: &AppState, area: Rect, buf: &mut Buffer, border_color: Color) {
+    let browser_state = &state.browser;
+    let title = if browser_state.current_dir.as_os_str().is_empty() {
+        " Browser: System Drives ".to_string()
+    } else {
+        format!(" Browser: {} ", browser_state.current_dir.to_string_lossy())
+    };
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color));
+
+    let items: Vec<ListItem> = browser_state
+        .entries
+        .items
+        .iter()
+        .filter_map(|entry| {
+            let item = entry.downcast_ref::<FileEntry>()?;
+            let icon = if item.is_dir { "📁" } else { "🎵" };
+            let color = if item.is_dir {
+                Color::Blue
+            } else {
+                Color::White
+            };
+
+            Some(ListItem::new(Line::from(vec![
+                Span::styled(format!("{} ", icon), Style::default().fg(color)),
+                Span::raw(&item.name),
+            ])))
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol(">> ");
+
+    // We must clone the list state to pass it into the stateful widget renderer
+    let mut list_state = browser_state.entries.state.clone();
+    StatefulWidget::render(list, area, buf, &mut list_state);
+}
+
+fn draw_youtube_browser_panel(state: &AppState, area: Rect, buf: &mut Buffer, border_color: Color) {
+    let browser_state = &state.browser;
+    let block = Block::default()
+        .title(" YouTube ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color));
+    let inner = block.inner(area);
+    Widget::render(block, area, buf);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(2),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let search_border = if browser_state.youtube_focus == YoutubeBrowserFocus::Search {
+        state.theme.foreground_color
+    } else {
+        Color::DarkGray
+    };
+    let search = Paragraph::new(browser_state.search_query.as_str()).block(
+        Block::default()
+            .title(" Search (Enter) ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(border_color));
+            .border_style(Style::default().fg(search_border)),
+    );
+    Widget::render(search, chunks[0], buf);
 
+    let results_border = if browser_state.youtube_focus == YoutubeBrowserFocus::Entries {
+        state.theme.foreground_color
+    } else {
+        Color::DarkGray
+    };
+    let result_block = Block::default()
+        .title(" Search Results ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(results_border));
+    if browser_state.is_searching {
+        Widget::render(
+            Paragraph::new("Searching YouTube…").block(result_block),
+            chunks[1],
+            buf,
+        );
+    } else if let Some(error) = &browser_state.search_error {
+        Widget::render(
+            Paragraph::new(error.as_str())
+                .style(Style::default().fg(Color::Red))
+                .block(result_block),
+            chunks[1],
+            buf,
+        );
+    } else {
         let items: Vec<ListItem> = browser_state
-            .files
+            .entries
             .items
             .iter()
-            .map(|item| {
-                let icon = if item.is_dir { "📁" } else { "🎵" };
-                let color = if item.is_dir {
-                    Color::Blue
-                } else {
-                    Color::White
-                };
-
-                ListItem::new(Line::from(vec![
-                    Span::styled(format!("{} ", icon), Style::default().fg(color)),
-                    Span::raw(&item.name),
-                ]))
+            .filter_map(|entry| {
+                let entry = entry.downcast_ref::<PlaylistEntry>()?;
+                let uploader = entry.uploader.as_deref().unwrap_or("Unknown channel");
+                let duration = format_duration(entry.duration);
+                Some(ListItem::new(Line::from(vec![
+                    Span::styled("▶ ", Style::default().fg(Color::Red)),
+                    Span::raw(entry.title.as_str()),
+                    Span::styled(
+                        format!(" — {uploader} [{duration}]"),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ])))
             })
             .collect();
 
-        let list = List::new(items)
-            .block(block)
-            .highlight_style(
-                Style::default()
-                    .bg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .highlight_symbol(">> ");
+        if items.is_empty() {
+            let message = if browser_state.submitted_query.is_some() {
+                "No results on this page"
+            } else {
+                "Find your favorite music: type a query above and press Enter"
+            };
+            Widget::render(Paragraph::new(message).block(result_block), chunks[1], buf);
+        } else {
+            let list = List::new(items)
+                .block(result_block)
+                .highlight_style(
+                    Style::default()
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .highlight_symbol(">> ");
+            let mut list_state = browser_state.entries.state.clone();
+            StatefulWidget::render(list, chunks[1], buf, &mut list_state);
+        }
+    }
 
-        // We must clone the list state to pass it into the stateful widget renderer
-        let mut list_state = browser_state.files.state.clone();
-        StatefulWidget::render(list, pane.rect, buf, &mut list_state);
+    let previous = if browser_state.page_idx > 0 {
+        "PgUp: Previous"
+    } else {
+        ""
+    };
+    let next = if browser_state.has_next_page {
+        "PgDn: Next"
+    } else {
+        ""
+    };
+    Widget::render(
+        Paragraph::new(format!(
+            "{previous:<16} Page {} {next:>16}  Enter: Actions  Esc: Search",
+            browser_state.page_idx + 1
+        )),
+        chunks[2],
+        buf,
+    );
+}
+
+fn draw_empty_provider_panel(
+    title: &str,
+    message: &str,
+    area: Rect,
+    buf: &mut Buffer,
+    border_color: Color,
+) {
+    Widget::render(
+        Paragraph::new(message).block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(border_color)),
+        ),
+        area,
+        buf,
+    );
+}
+
+fn format_duration(duration: Option<f64>) -> String {
+    let seconds = duration.unwrap_or_default().max(0.0).round() as u64;
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let seconds = seconds % 60;
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
     }
 }

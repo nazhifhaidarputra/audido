@@ -100,7 +100,10 @@ impl FftSpectrumEngine {
             self.input_buffer[i] = self.accum[src] * self.window[i];
         }
 
-        if let Err(e) = self.planner.process(&mut self.input_buffer, &mut self.output_buffer) {
+        if let Err(e) = self
+            .planner
+            .process(&mut self.input_buffer, &mut self.output_buffer)
+        {
             log::error!("FFT processing failed: {}", e);
             return self.last_bins.clone();
         }

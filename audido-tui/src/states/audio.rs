@@ -2,7 +2,10 @@ use std::fmt::{self, Debug};
 
 use audido_core::metadata::AudioMetadata;
 use ratatui_image::protocol::Protocol;
-use ringbuf::{HeapCons, traits::{Consumer, Observer}};
+use ringbuf::{
+    HeapCons,
+    traits::{Consumer, Observer},
+};
 
 /// Audio-related state (playback status, position, volume, metadata, messages)
 #[derive(Debug, Clone)]
@@ -13,6 +16,8 @@ pub struct AudioState {
     pub position: f32,
     /// Total duration in seconds
     pub duration: f32,
+    /// Duration in seconds currently decoded and available for seeking.
+    pub buffered: f32,
     /// Current volume (0.0 to 1.0)
     pub volume: f32,
     /// Currently loaded audio metadata
@@ -22,7 +27,7 @@ pub struct AudioState {
     /// Error message if any
     pub error_message: Option<String>,
     pub cover_image_protocol: ImageProtocolWrapper,
-    pub visualizer_config: AudioVisualizerConfig 
+    pub visualizer_config: AudioVisualizerConfig,
 }
 
 /// Configuration and live data for the audio spectrum visualizer.
@@ -152,6 +157,7 @@ impl AudioState {
             is_playing: false,
             position: 0.0,
             duration: 0.0,
+            buffered: 0.0,
             volume: 1.0,
             metadata: None,
             status_message: "No audio loaded. Pass a file path as argument.".to_string(),
@@ -168,6 +174,21 @@ impl AudioState {
         } else {
             0.0
         }
+    }
+
+    /// Get the loaded-buffer percentage (0.0 to 1.0).
+    pub fn buffered_progress(&self) -> f32 {
+        if self.duration > 0.0 {
+            (self.buffered / self.duration).clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    }
+
+    pub fn is_youtube_stream(&self) -> bool {
+        self.metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata.format == "youtube-stream")
     }
 
     /// Format time as MM:SS

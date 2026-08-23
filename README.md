@@ -2,8 +2,8 @@
 
 ![crates.io](https://img.shields.io/crates/v/audido-tui.svg)
 ![docs.rs](https://docs.rs/audido-tui/badge.svg)
-![license](https://img.shields.io/badge/license-MIT-blue.svg)
-![rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)
+![license](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)
+![rust](https://img.shields.io/badge/rust-stable-orange.svg)
 
 Audido is a terminal-based audio player (TUI) written in Rust. It provides a local audio player, queue management, and a foundation for DSP-based audio processing.
 
@@ -11,18 +11,78 @@ Audido is a terminal-based audio player (TUI) written in Rust. It provides a loc
 - Local audio playback
 - Queue management
 - Browse local files from the TUI
-- Extensible DSP pipeline (EQ, normalization, pitch shifting, etc.)
+- Extensible DSP pipeline (EQ, normalization, pitch shifting, etc.). Only EQ is now available
 
 ## Install
 
+Audido uses `ffmpeg` and `yt-dlp` for YouTube playback. The Debian and Scoop
+packages declare these dependencies. Install them separately when using a raw
+binary or macOS archive.
+
+### Linux (Debian/Ubuntu)
+
+Download the `.deb` for the latest release and install it with APT so runtime
+dependencies are resolved:
+
+```bash
+sudo apt install ./audido_VERSION_amd64.deb
+```
+
+### Linux and macOS installer
+
+The portable installer selects the latest x86_64 Linux or Intel/Apple-Silicon
+macOS archive, verifies its SHA-256 checksum, and installs into `~/.local/bin`
+for a normal user:
+
+```bash
+curl -fsSL https://github.com/nazhifhaidarputra/audido/releases/latest/download/install.sh | sh
+```
+
+On unsupported Linux architectures or musl-based distributions, it builds the
+tagged source release locally. You can request that explicitly:
+
+```bash
+./install.sh --from-source
+./install.sh --version 0.1.1 --prefix /opt/audido
+```
+
+For macOS YouTube playback, install the external tools with Homebrew:
+
+```bash
+brew install ffmpeg yt-dlp
+```
+
+### Windows
+
+Each GitHub release includes all of these options:
+
+- `audido-setup-...exe`: Inno Setup installer.
+- `audido-tui-...exe`: standalone binary.
+- `audido-...zip`: portable archive used by Scoop.
+- `audido.json`: versioned Scoop manifest.
+
+Install directly from the release manifest with Scoop:
+
+```powershell
+scoop install https://github.com/nazhifhaidarputra/audido/releases/latest/download/audido.json
+```
+
+The Scoop manifest installs `ffmpeg` and `yt-dlp` automatically. For the Inno
+or standalone binary, install those tools separately and make sure they are on
+`PATH`.
+
+### Build from source
+
 Prerequisites:
-- Rust toolchain (recommended via `rustup`)
-- `cargo` available on PATH
+
+- The stable Rust toolchain (recommended via `rustup`).
+- Linux only: `pkg-config` and ALSA development headers.
+- Optional YouTube playback: `ffmpeg` and `yt-dlp` on `PATH`.
 
 Clone the repository:
 
 ```bash
-git clone https://github.com/haidarptrw/audido.git
+git clone https://github.com/nazhifhaidarputra/audido.git
 cd audido
 ```
 
@@ -73,12 +133,28 @@ cargo run --release -p audido-tui
 ## Configuration & Notes
 
 - The project uses a workspace layout. The main interactive binary lives in the `audido-tui` crate.
+- Set `AUDIDO_FFMPEG` or `AUDIDO_YT_DLP` to use tools outside `PATH`.
+
+## Releasing
+
+The CI workflow checks Linux, Windows, macOS Apple Silicon, and macOS Intel.
+Pushing a tag matching the workspace version runs the complete packaging and
+GitHub Release pipeline:
+
+```bash
+# First update version under [workspace.package] in Cargo.toml.
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+The release workflow also supports manual dispatch for an existing tag. It
+publishes `SHA256SUMS` alongside every package.
 
 ## Contributors
 
 Thanks to everyone who contributed. If your name or avatar is missing, open a PR to add yourself.
 
- - **haidarptrw** — https://github.com/haidarptrw  
+ - **nazhifhaidarputra** — https://github.com/nazhifhaidarputra  
 
 If you want to add more contributors automatically, run:
 
@@ -92,4 +168,4 @@ Contributions welcome — please open issues or PRs. For large changes, open an 
 
 ## License
 
-This project is licensed under the MIT LIcense — see the [LICENSE](LICENSE) file for details.
+This project is licensed under GPL-3.0-or-later — see the [LICENSE](LICENSE) file for details.

@@ -20,6 +20,7 @@ lazy_static::lazy_static! {
 pub fn setup_logging() -> anyhow::Result<()> {
     let _ = std::fs::remove_file("audido.log");
 
+    let filter = LevelFilter::Info;
     fern::Dispatch::new()
         .format(|out, message, record| {
             let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
@@ -32,7 +33,7 @@ pub fn setup_logging() -> anyhow::Result<()> {
                 message
             ))
         })
-        .level(LevelFilter::Debug)
+        .level(filter)
         .chain(fern::log_file("audido.log")?)
         .chain(fern::Output::call(|record| {
             let log_record = LogRecord {

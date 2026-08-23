@@ -88,8 +88,7 @@ fn draw_settings_list(f: &mut Frame, area: Rect, state: &AppState) {
         .iter()
         .enumerate()
         .map(|(i, setting)| {
-            let is_selected =
-                settings_state.selected_index == i && !settings_state.is_dialog_open;
+            let is_selected = settings_state.selected_index == i && !settings_state.is_dialog_open;
 
             let value_str: String = match setting {
                 SettingsOption::Equalizer => {
@@ -132,4 +131,3 @@ fn draw_settings_list(f: &mut Frame, area: Rect, state: &AppState) {
     let list = List::new(items);
     f.render_widget(list, inner);
 }
-

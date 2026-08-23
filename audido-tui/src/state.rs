@@ -5,11 +5,15 @@ use ratatui::widgets::ListState;
 use ratatui_image::picker::Picker;
 use strum::IntoEnumIterator;
 
-use crate::{states::{
-    AudioState, BrowserState, EqState, QueueState, SettingsState, audio::ImageProtocolWrapper, normalizer::NormalizerState,
-}, themes::AppTheme};
+use crate::{
+    states::{
+        AudioState, BrowserState, EqState, QueueState, SettingsState, audio::ImageProtocolWrapper,
+        normalizer::NormalizerState,
+    },
+    themes::AppTheme,
+};
 
-/// A generic stateful list pattern using PhantomData for distinct typing 
+/// A generic stateful list pattern using PhantomData for distinct typing
 /// and to deduplicate shared list navigation logic.
 #[derive(Debug, Clone)]
 pub struct StatefulList<T, Tag> {
@@ -37,7 +41,11 @@ impl<T, Tag> StatefulList<T, Tag> {
         }
         let i = match self.state.selected() {
             Some(i) => {
-                if i >= self.items.len() - 1 { 0 } else { i + 1 }
+                if i >= self.items.len() - 1 {
+                    0
+                } else {
+                    i + 1
+                }
             }
             None => 0,
         };
@@ -50,7 +58,11 @@ impl<T, Tag> StatefulList<T, Tag> {
         }
         let i = match self.state.selected() {
             Some(i) => {
-                if i == 0 { self.items.len() - 1 } else { i - 1 }
+                if i == 0 {
+                    self.items.len() - 1
+                } else {
+                    i - 1
+                }
             }
             None => 0,
         };
@@ -108,18 +120,23 @@ impl AppState {
             CoreEvent::Paused => {
                 self.audio.is_playing = false;
                 self.audio.status_message = "Paused".to_string();
-                let bins =  self.audio.visualizer_config.bins_mut();
+                let bins = self.audio.visualizer_config.bins_mut();
                 bins.fill(-140.0);
             }
             CoreEvent::Stopped => {
                 self.audio.is_playing = false;
                 self.audio.position = 0.0;
                 self.audio.status_message = "Stopped".to_string();
-                let bins =  self.audio.visualizer_config.bins_mut();
+                let bins = self.audio.visualizer_config.bins_mut();
                 bins.fill(-140.0);
             }
             CoreEvent::Loaded(metadata) => {
                 self.audio.duration = metadata.duration;
+                self.audio.buffered = if metadata.format == "youtube-stream" {
+                    0.0
+                } else {
+                    metadata.duration
+                };
                 self.audio.status_message = format!(
                     "Loaded: {} - {}",
                     metadata.title.as_deref().unwrap_or("Unknown"),
@@ -128,9 +145,14 @@ impl AppState {
                 self.update_cover_image(&metadata);
                 self.audio.metadata = Some(metadata);
             }
-            CoreEvent::Position { current, total } => {
+            CoreEvent::Position {
+                current,
+                total,
+                buffered,
+            } => {
                 self.audio.position = current;
                 self.audio.duration = total;
+                self.audio.buffered = buffered;
             }
             CoreEvent::Error(msg) => {
                 self.audio.error_message = Some(msg.clone());
@@ -157,9 +179,10 @@ impl AppState {
                     format!("Track {}/{}", index + 1, self.queue.queue.len());
             }
             CoreEvent::DeviceInvalidated => {
-                self.audio.error_message = Some("Audio device disconnected. Attempting recovery...".to_string());
+                self.audio.error_message =
+                    Some("Audio device disconnected. Attempting recovery...".to_string());
                 self.audio.status_message = "Reconnecting audio...".to_string();
-            },
+            }
         }
     }
 
@@ -227,10 +250,12 @@ impl AppState {
     fn update_cover_image(&mut self, metadata: &audido_core::metadata::AudioMetadata) {
         let image_protocol = metadata.cover.as_ref().and_then(|bytes| {
             let dyn_img = image::load_from_memory(bytes).ok()?;
-                
+
             let target_size = ratatui::layout::Size::new(28, 12);
-            
-            self.picker.new_protocol(dyn_img, target_size, ratatui_image::Resize::Fit(None)).ok()
+
+            self.picker
+                .new_protocol(dyn_img, target_size, ratatui_image::Resize::Fit(None))
+                .ok()
         });
         self.audio.cover_image_protocol = ImageProtocolWrapper::new(image_protocol);
     }

@@ -1,11 +1,9 @@
 pub struct NormalizerState {
-    pub enabled: bool,   
+    pub enabled: bool,
 }
 
 impl NormalizerState {
     pub fn new() -> Self {
-        Self {
-            enabled: false,
-        }
+        Self { enabled: false }
     }
 }

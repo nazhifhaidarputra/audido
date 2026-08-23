@@ -24,4 +24,3 @@ pub enum CoverArt {
     /// No cover art
     None,
 }
-

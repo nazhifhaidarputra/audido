@@ -1,31 +1,41 @@
 use std::{
     fs::File,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex, RwLock,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
     time::Instant,
 };
 
 use anyhow::Context;
-use crossbeam_channel::Receiver;
 use lofty::{file::TaggedFileExt, probe::Probe, tag::Accessor};
 use rodio::{Decoder, Source};
 
-use crate::{
-    commands::RealtimeCommand,
-    dsp::{dsp_graph::DspNode, eq::Equalizer, normalization::Normalizer},
-    metadata::{AudioMetadata, ChannelLayout},
-};
+use crate::metadata::{AudioMetadata, ChannelLayout};
 
 use crate::dsp::pitch_detection::{SongKeyArgsBuilder, detect_song_key};
 
-const CHUNK_SIZE: usize = 512;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AudioSource {
+    Local { path: PathBuf },
+    Youtube { url: String },
+}
+
+impl AudioSource {
+    pub fn get_path(&self) -> Option<String> {
+        match self {
+            AudioSource::Local { path } => {
+                path.file_name().map(|s| s.to_string_lossy().to_string())
+            }
+            AudioSource::Youtube { url } => Some(url.clone()),
+        }
+    }
+}
 
 /// Shared position tracker between source and engine
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct PositionTracker {
     /// Current sample position (atomic for thread-safe access)
     position: Arc<AtomicUsize>,
@@ -73,17 +83,109 @@ impl PositionTracker {
     }
 }
 
+#[derive(Debug)]
 pub struct AudioPlaybackData {
     metadata: Arc<Mutex<AudioMetadata>>,
-    buffer: Arc<Vec<f32>>,
+    buffer: AudioBuffer,
     position_tracker: PositionTracker,
 }
 
-pub enum AudioSource {
-    Local { data: AudioPlaybackData },
+/// A growing, retained PCM buffer used by streaming sources.
+///
+/// Unlike a receiver channel, decoded samples remain addressable after they
+/// have been played. The DSP loop can therefore move its read cursor backward
+/// or forward anywhere inside the decoded portion of the stream.
+#[derive(Clone, Debug, Default)]
+pub struct StreamingAudioBuffer {
+    samples: Arc<RwLock<Vec<f32>>>,
+    complete: Arc<AtomicBool>,
+}
+
+impl StreamingAudioBuffer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Retain another batch of interleaved PCM samples.
+    pub fn append(&self, samples: &[f32]) {
+        if samples.is_empty() {
+            return;
+        }
+
+        self.samples
+            .write()
+            .expect("streaming audio buffer poisoned")
+            .extend_from_slice(samples);
+    }
+
+    /// Mark the decoder as finished. No samples will be appended afterward.
+    pub fn mark_complete(&self) {
+        self.complete.store(true, Ordering::Release);
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.complete.load(Ordering::Acquire)
+    }
+
+    /// Number of interleaved PCM samples currently available for seeking.
+    pub fn buffered_samples(&self) -> usize {
+        self.samples
+            .read()
+            .expect("streaming audio buffer poisoned")
+            .len()
+    }
+
+    /// Whether two playback buffers reference the same retained stream.
+    #[cfg(test)]
+    pub(crate) fn shares_storage_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.samples, &other.samples)
+    }
+
+    /// Copy up to `max_samples` retained samples beginning at `position`.
+    pub fn copy_from(&self, position: usize, max_samples: usize, output: &mut Vec<f32>) -> usize {
+        let samples = self
+            .samples
+            .read()
+            .expect("streaming audio buffer poisoned");
+        if position >= samples.len() {
+            return 0;
+        }
+
+        let end = position.saturating_add(max_samples).min(samples.len());
+        output.extend_from_slice(&samples[position..end]);
+        end - position
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum AudioBuffer {
+    InMemory(Arc<Vec<f32>>),
+    Stream(StreamingAudioBuffer),
+}
+
+impl AudioBuffer {
+    /// Number of samples that can be addressed immediately without waiting
+    /// for more data to be decoded.
+    pub fn buffered_samples(&self) -> usize {
+        match self {
+            Self::InMemory(samples) => samples.len(),
+            Self::Stream(samples) => samples.buffered_samples(),
+        }
+    }
 }
 
 impl AudioPlaybackData {
+    pub fn new(
+        metadata: AudioMetadata,
+        buffer: AudioBuffer,
+        position_tracker: PositionTracker,
+    ) -> Self {
+        Self {
+            metadata: Arc::new(Mutex::new(metadata)),
+            buffer,
+            position_tracker,
+        }
+    }
     /// Decode `path` and, when `target_sample_rate` is given and differs from the
     /// file's native rate, pre-resample the decoded buffer to that rate so it's
     /// already synchronized with the output device before playback starts.
@@ -182,7 +284,7 @@ impl AudioPlaybackData {
 
         let playback_data = AudioPlaybackData {
             metadata,
-            buffer: samples_arc,
+            buffer: AudioBuffer::InMemory(samples_arc),
             position_tracker,
         };
 
@@ -269,195 +371,50 @@ impl AudioPlaybackData {
 
     /// Direct access to the raw decoded sample buffer (interleaved f32).
     /// Used by the new DSP feed loop to read chunks into the SPSC ring buffer.
-    pub fn buffer(&self) -> Arc<Vec<f32>> {
-        Arc::clone(&self.buffer)
+    pub fn buffer(&self) -> &AudioBuffer {
+        &self.buffer
     }
 
     /// Total number of interleaved f32 samples (frames × channels).
     pub fn total_samples(&self) -> usize {
-        self.buffer.len()
-    }
-
-    /// Create a rodio `Source` from the buffered audio data.  
-    /// **Retained for backward compatibility** — the new DSP pipeline uses
-    /// `buffer()` directly and does not need a rodio Source.
-    pub fn create_source(
-        &self,
-        initial_eq: Equalizer,
-        eq_enabled: bool,
-        cmd_rx: Receiver<RealtimeCommand>,
-    ) -> BufferedSource {
-        BufferedSource::new(
-            self.buffer.clone(),
-            self.metadata().sample_rate,
-            self.metadata().num_channels,
-            self.position_tracker.clone(),
-            initial_eq,
-            eq_enabled,
-            cmd_rx,
-        )
-    }
-}
-
-/// A buffered audio source that implements rodio's Source trait.
-/// **Note**: This type is retained for legacy/testing use. The new audio pipeline
-/// uses the DSP feed loop in `modules::playback` with the SPSC ring buffer directly.
-pub struct BufferedSource {
-    samples: Arc<Vec<f32>>,
-    sample_rate: u32,
-    channels: u16,
-    position_tracker: PositionTracker,
-    equalizer: DspNode<Equalizer>,
-    normalizer: DspNode<Normalizer>,
-    cmd_rx: Receiver<RealtimeCommand>,
-
-    // Chunk Processing
-    process_buffer: Vec<f32>,
-    process_buffer_idx: usize,
-}
-
-impl BufferedSource {
-    pub fn new(
-        samples: Arc<Vec<f32>>,
-        sample_rate: u32,
-        channels: u16,
-        position_tracker: PositionTracker,
-        equalizer: Equalizer,
-        eq_enabled: bool,
-        cmd_rx: Receiver<RealtimeCommand>,
-    ) -> Self {
-        Self {
-            samples,
-            sample_rate,
-            channels,
-            position_tracker,
-            equalizer: DspNode::new_with_state(equalizer, eq_enabled),
-            normalizer: DspNode::new_with_state(Normalizer::new(), false),
-            cmd_rx,
-            process_buffer: Vec::with_capacity(CHUNK_SIZE),
-            process_buffer_idx: 0,
-        }
-    }
-
-    fn fill_buffer(&mut self) -> bool {
-        self.process_buffer.clear();
-        self.process_buffer_idx = 0;
-
-        // Process Pending Realtime Commands (Lock-Free)
-        while let Ok(cmd) = self.cmd_rx.try_recv() {
-            match cmd {
-                RealtimeCommand::Stop => return false,
-                RealtimeCommand::SeekToFrame(frame) => {
-                    self.position_tracker.position.store(frame, Ordering::Relaxed);
-                }
-                RealtimeCommand::UpdateEqFilter(idx, filter_node) => {
-                    self.equalizer.set_filter(idx, filter_node);
-                }
-                RealtimeCommand::SetAllEqFilters(filter_nodes) => {
-                    self.equalizer.set_all_filters(filter_nodes);
-                }
-                RealtimeCommand::SetEqMasterGain(gain) => {
-                    self.equalizer.set_master_gain(gain);
-                }
-                RealtimeCommand::SetEqPreset(preset) => {
-                    self.equalizer.instance.update_preset(preset);
-                }
-                RealtimeCommand::SetEqEnabled(enabled) => {
-                    self.equalizer.on = enabled;
-                }
-                RealtimeCommand::ResetEq => {
-                    self.equalizer.instance.reset_parameters();
-                }
-                RealtimeCommand::ResetEqFilterNode(index) => {
-                    let _ = self.equalizer.instance.reset_filter_node_param(index);
-                }
-                RealtimeCommand::SetNormalizerMode(mode) => {
-                    self.normalizer.instance.set_mode(mode);
-                }
-                RealtimeCommand::SetNormalizerTargetLevel(level) => {
-                    self.normalizer.instance.set_target_level(level);
-                }
-                RealtimeCommand::SetNormalizerHeadroom(headroom) => {
-                    self.normalizer.instance.set_headroom(headroom);
-                }
-                RealtimeCommand::SetNormalizerEnabled(enabled) => {
-                    self.normalizer.on = enabled;
-                }
+        match &self.buffer {
+            AudioBuffer::InMemory(samples) => samples.len(),
+            AudioBuffer::Stream(_) => {
+                let metadata = self.metadata();
+                (metadata.sample_rate as f32 * metadata.duration * metadata.num_channels as f32)
+                    as usize
             }
         }
+    }
 
-        // Fetch Audio
-        let global_pos = self.position_tracker.position.load(Ordering::Relaxed);
-        if global_pos >= self.samples.len() {
-            return false;
-        }
-
-        let end_pos = (global_pos + CHUNK_SIZE).min(self.samples.len());
-        self.process_buffer
-            .extend_from_slice(&self.samples[global_pos..end_pos]);
-
-        // Apply DSP filters in order: EQ -> Normalizer
-        if self.equalizer.on {
-            self.equalizer
-                .instance
-                .process_frame(&mut self.process_buffer);
-        }
-
-        // Apply normalizer if enabled
-        if self.normalizer.on {
-            self.normalizer.instance.process(&mut self.process_buffer);
-        }
-
-        true
+    /// Number of interleaved samples currently loaded and seekable.
+    pub fn buffered_samples(&self) -> usize {
+        self.buffer.buffered_samples()
     }
 }
 
-impl Iterator for BufferedSource {
-    type Item = f32;
+#[cfg(test)]
+mod streaming_buffer_tests {
+    use super::StreamingAudioBuffer;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        // If we've exhausted the process buffer, refill it
-        if self.process_buffer_idx >= self.process_buffer.len() && !self.fill_buffer() {
-            return None;
-        }
+    #[test]
+    fn retained_stream_can_be_read_again_at_any_buffered_position() {
+        let buffer = StreamingAudioBuffer::new();
+        buffer.append(&[0.0, 0.1, 0.2, 0.3]);
+        buffer.append(&[0.4, 0.5]);
 
-        // Return the next sample from our processed buffer
-        if self.process_buffer_idx < self.process_buffer.len() {
-            let sample = self.process_buffer[self.process_buffer_idx];
-            self.process_buffer_idx += 1;
+        let mut output = Vec::new();
+        assert_eq!(buffer.copy_from(3, 2, &mut output), 2);
+        assert_eq!(output, vec![0.3, 0.4]);
 
-            // Update position tracker
-            let pos = self.position_tracker.position.load(Ordering::Relaxed);
-            self.position_tracker
-                .position
-                .store(pos + 1, Ordering::Relaxed);
+        output.clear();
+        assert_eq!(buffer.copy_from(0, 3, &mut output), 3);
+        assert_eq!(output, vec![0.0, 0.1, 0.2]);
+        assert_eq!(buffer.buffered_samples(), 6);
+        assert!(!buffer.is_complete());
 
-            Some(sample)
-        } else {
-            None
-        }
-    }
-}
-
-impl Source for BufferedSource {
-    fn current_span_len(&self) -> Option<usize> {
-        let pos = self.position_tracker.position.load(Ordering::Relaxed);
-        Some(self.samples.len() - pos)
-    }
-
-    fn channels(&self) -> u16 {
-        self.channels
-    }
-
-    fn sample_rate(&self) -> u32 {
-        self.sample_rate
-    }
-
-    fn total_duration(&self) -> Option<std::time::Duration> {
-        let frames = self.samples.len() / (self.channels as usize);
-        Some(std::time::Duration::from_secs_f64(
-            (frames as f64) / (self.sample_rate as f64),
-        ))
+        buffer.mark_complete();
+        assert!(buffer.is_complete());
     }
 }
 

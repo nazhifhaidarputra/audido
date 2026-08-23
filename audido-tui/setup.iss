@@ -2,9 +2,17 @@
 ; This script creates an installer for the Audido terminal-based audio player
 
 #define MyAppName "Audido"
-#define MyAppVersion "0.1.0"
+#ifndef MyAppVersion
+  #define MyAppVersion "0.1.1"
+#endif
+#ifndef MyOutputDir
+  #define MyOutputDir "..\target\release"
+#endif
+#ifndef MyOutputBaseFilename
+  #define MyOutputBaseFilename "audido-setup-" + MyAppVersion + "-windows-x86_64"
+#endif
 #define MyAppPublisher "Audido"
-#define MyAppURL "https://github.com/haidarptrw/audido"
+#define MyAppURL "https://github.com/nazhifhaidarputra/audido"
 #define MyAppExeName "audido-tui.exe"
 #define MyAppDescription "A terminal-based audio player with queue management"
 
@@ -22,18 +30,19 @@ AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
-LicenseFile=
+LicenseFile=..\LICENSE
 InfoBeforeFile=
 InfoAfterFile=
 ; Uncomment the following line to run in non administrative install mode (install for current user only.)
 ;PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
-OutputDir=..\target\release
-OutputBaseFilename=audido-setup-{#MyAppVersion}
+OutputDir={#MyOutputDir}
+OutputBaseFilename={#MyOutputBaseFilename}
 SetupIconFile=
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
+ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ChangesAssociations=yes
 ChangesEnvironment=yes

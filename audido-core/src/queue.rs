@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use strum::EnumIter;
 
-use crate::metadata::AudioMetadata;
+use crate::{metadata::AudioMetadata, source::AudioSource};
 
 /// Loop/repeat mode for queue playback
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, EnumIter, strum::Display)]
@@ -22,7 +22,7 @@ pub enum LoopMode {
 #[derive(Debug, Clone)]
 pub struct QueueItem {
     pub id: usize,
-    pub path: PathBuf,
+    pub source: AudioSource,
     pub metadata: Option<AudioMetadata>,
 }
 
@@ -43,13 +43,23 @@ impl PlaybackQueue {
 
     /// Add paths to queue, returns assigned IDs
     pub fn add(&mut self, paths: Vec<PathBuf>) -> Vec<usize> {
-        let mut ids = Vec::with_capacity(paths.len());
-        for path in paths {
+        self.add_sources(
+            paths
+                .into_iter()
+                .map(|path| AudioSource::Local { path })
+                .collect(),
+        )
+    }
+
+    /// Add local and/or remote audio sources to the same queue.
+    pub fn add_sources(&mut self, sources: Vec<AudioSource>) -> Vec<usize> {
+        let mut ids = Vec::with_capacity(sources.len());
+        for source in sources {
             let id = self.next_id;
             self.next_id += 1;
             self.items.push(QueueItem {
                 id,
-                path,
+                source,
                 metadata: None,
             });
             ids.push(id);
@@ -185,5 +195,28 @@ impl PlaybackQueue {
         if let Some(item) = self.items.iter_mut().find(|item| item.id == id) {
             item.metadata = Some(metadata);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_mixed_local_and_youtube_sources() {
+        let mut queue = PlaybackQueue::new();
+        let local = AudioSource::Local {
+            path: PathBuf::from("song.mp3"),
+        };
+        let youtube = AudioSource::Youtube {
+            url: "https://youtube.test/watch?v=track".to_string(),
+        };
+
+        let ids = queue.add_sources(vec![local.clone(), youtube.clone()]);
+
+        assert_eq!(ids, vec![0, 1]);
+        assert_eq!(queue.items.len(), 2);
+        assert_eq!(queue.items[0].source, local);
+        assert_eq!(queue.items[1].source, youtube);
     }
 }

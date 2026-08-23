@@ -20,9 +20,12 @@
 //! `Arc<CoreContext>` and spawn a Tokio task internally. This means callers on the TUI
 //! thread are **never blocked**.
 
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+    },
 };
 
 /// Default number of FFT frequency bins for the spectrum visualizer.
@@ -40,6 +43,7 @@ use tokio::sync::broadcast;
 use crate::{
     commands::{CoreEvent, RealtimeCommand},
     dsp::{eq::Equalizer, normalization::Normalizer, spectrum::FftSpectrumEngine},
+    modules::youtube::ytdlp::YtDlpRuntime,
     queue::PlaybackQueue,
     source::AudioPlaybackData,
 };
@@ -154,6 +158,10 @@ pub struct CoreContext {
     /// The DSP thread pushes a flat `Vec<f32>` of `spectrum_bin_size` bins each chunk.
     /// Wrapped in Mutex so it can be hot-swapped when bin_size changes.
     pub spectrum_producer: Mutex<HeapProd<f32>>,
+
+    /// yt-dlp/ffmpeg binary wrapper + shared downloader, built once and
+    /// reused across every YouTube streaming task in the app.
+    pub yt: YtDlpRuntime,
 }
 
 impl CoreContext {
@@ -162,6 +170,7 @@ impl CoreContext {
         tokio_handle: tokio::runtime::Handle,
         ring_producer: HeapProd<f32>,
         spectrum_producer: HeapProd<f32>,
+        yt: YtDlpRuntime,
     ) -> Self {
         Self {
             atomics: PlaybackAtomics::default(),
@@ -178,6 +187,7 @@ impl CoreContext {
             zero_copy_fft: Mutex::new(FftSpectrumEngine::new(4096, DEFAULT_SPECTRUM_BIN_SIZE)),
             spectrum_bin_size: AtomicUsize::new(DEFAULT_SPECTRUM_BIN_SIZE),
             spectrum_producer: Mutex::new(spectrum_producer),
+            yt,
         }
     }
 
@@ -259,12 +269,16 @@ impl CoreHandle {
 }
 
 /// Initialise the audio core.  
+/// Initialise the audio core.
 /// This function:
 /// 1. Opens the default CPAL output device and stream.
 /// 2. Allocates the SPSC heap ring buffer — consumer goes to CPAL, producer stays in `CoreContext`.
 /// 3. Starts the Tokio multi-thread runtime.
 /// 4. Starts the position-update watcher Tokio task.
 /// 5. Returns a [`CoreHandle`] ready for consumption by `audido-tui`.
+/// 5. Resolves the stream cache directory (`$XDG_CACHE_HOME/audido/streams`).
+/// 6. Builds the shared `yt-dlp` + `ffmpeg` library handle from the `libs/` directory.
+/// 7. Returns a [`CoreHandle`] ready for consumption by `audido-tui`.
 pub fn init() -> anyhow::Result<CoreHandle> {
     let host = cpal::default_host();
     let device = host
@@ -292,12 +306,25 @@ pub fn init() -> anyhow::Result<CoreHandle> {
 
     let runtime = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
+            .worker_threads(4)
             .enable_all()
             .build()
             .context("Failed to create Tokio runtime")?,
     );
     let tokio_handle = runtime.handle().clone();
+
+    let stream_cache_dir: PathBuf = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(dirs::cache_dir)
+        .unwrap_or_else(|| PathBuf::from("cache"))
+        .join("audido")
+        .join("streams");
+    std::fs::create_dir_all(&stream_cache_dir)
+        .with_context(|| format!("Failed to create stream cache dir: {:?}", stream_cache_dir))?;
+    log::info!("Stream cache directory: {:?}", stream_cache_dir);
+
+    let yt_libraries = init_ytdlp_lib();
+    let yt = YtDlpRuntime::new(yt_libraries, stream_cache_dir);
 
     let (event_tx, _) = broadcast::channel(EVENT_BROADCAST_CAPACITY);
     let ctx = Arc::new(CoreContext::new(
@@ -305,7 +332,9 @@ pub fn init() -> anyhow::Result<CoreHandle> {
         tokio_handle.clone(),
         producer,
         spectrum_producer,
+        yt,
     ));
+
     ctx.atomics
         .device_sample_rate
         .store(config.sample_rate().0, Ordering::Relaxed);
@@ -328,6 +357,46 @@ pub fn init() -> anyhow::Result<CoreHandle> {
         stream: Some(cpal_stream),
         spectrum_consumer: Some(spectrum_consumer),
     })
+}
+
+pub fn init_ytdlp_lib() -> yt_dlp::prelude::Libraries {
+    yt_dlp::prelude::Libraries::new(
+        resolve_runtime_tool("AUDIDO_YT_DLP", "yt-dlp"),
+        resolve_runtime_tool("AUDIDO_FFMPEG", "ffmpeg"),
+    )
+}
+
+/// Resolve an external tool without embedding the build machine's checkout path.
+///
+/// Packagers may put tools beside the executable or under `lib/audido`. System
+/// packages normally leave them on `PATH`. Environment variables provide an
+/// escape hatch for custom installations.
+fn resolve_runtime_tool(environment_variable: &str, binary_name: &str) -> PathBuf {
+    if let Some(path) = std::env::var_os(environment_variable).filter(|value| !value.is_empty()) {
+        return PathBuf::from(path);
+    }
+
+    let executable_name = format!("{binary_name}{}", std::env::consts::EXE_SUFFIX);
+
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(binary_dir) = executable.parent()
+    {
+        let mut candidates = vec![
+            binary_dir.join(&executable_name),
+            binary_dir.join("deps").join(&executable_name),
+        ];
+
+        if let Some(prefix) = binary_dir.parent() {
+            candidates.push(prefix.join("lib").join("audido").join(&executable_name));
+        }
+
+        if let Some(path) = candidates.into_iter().find(|path| path.is_file()) {
+            return path;
+        }
+    }
+
+    // A bare executable name lets std::process::Command use the platform PATH.
+    PathBuf::from(executable_name)
 }
 
 fn build_cpal_stream(
@@ -488,12 +557,23 @@ async fn run_position_watcher(ctx: Arc<CoreContext>) {
         let channels = ctx.atomics.num_channels.load(Ordering::Relaxed) as f32;
         let pos_samples = ctx.atomics.position_samples.load(Ordering::Relaxed);
         let total_samples = ctx.atomics.total_samples.load(Ordering::Relaxed);
+        let buffered_samples = ctx
+            .current_audio
+            .lock()
+            .expect("current_audio poisoned")
+            .as_ref()
+            .map_or(0, |audio| audio.buffered_samples());
 
         if sample_rate > 0.0 && channels > 0.0 {
             let frames_per_second = sample_rate * channels;
             let current = pos_samples as f32 / frames_per_second;
             let total = total_samples as f32 / frames_per_second;
-            ctx.emit(CoreEvent::Position { current, total });
+            let buffered = buffered_samples.min(total_samples) as f32 / frames_per_second;
+            ctx.emit(CoreEvent::Position {
+                current,
+                total,
+                buffered,
+            });
 
             // Detect natural track end
             if total_samples > 0 && pos_samples >= total_samples {

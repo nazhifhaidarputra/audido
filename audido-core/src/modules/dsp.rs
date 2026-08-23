@@ -19,7 +19,8 @@ fn send_rt(ctx: &CoreContext, cmd: RealtimeCommand) {
 pub fn set_enabled(ctx: Arc<CoreContext>, enabled: bool) {
     let handle = ctx.tokio_handle.clone();
     handle.spawn(async move {
-        ctx.eq_enabled.store(enabled, std::sync::atomic::Ordering::Relaxed);
+        ctx.eq_enabled
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
         send_rt(&ctx, RealtimeCommand::SetEqEnabled(enabled));
         log::info!("EQ enabled: {}", enabled);
     });
@@ -29,7 +30,10 @@ pub fn set_master_gain(ctx: Arc<CoreContext>, gain_db: f32) {
     let handle = ctx.tokio_handle.clone();
     handle.spawn(async move {
         let linear = 10.0f32.powf(gain_db / 20.0);
-        ctx.eq_shadow.lock().expect("eq_shadow poisoned").master_gain = linear;
+        ctx.eq_shadow
+            .lock()
+            .expect("eq_shadow poisoned")
+            .master_gain = linear;
         send_rt(&ctx, RealtimeCommand::SetEqMasterGain(linear));
         log::info!("EQ master gain: {:.2} dB", gain_db);
     });
@@ -64,7 +68,10 @@ pub fn set_filters(ctx: Arc<CoreContext>, filters: Vec<FilterNode>) {
 pub fn reset_eq(ctx: Arc<CoreContext>) {
     let handle = ctx.tokio_handle.clone();
     handle.spawn(async move {
-        ctx.eq_shadow.lock().expect("eq_shadow poisoned").reset_parameters();
+        ctx.eq_shadow
+            .lock()
+            .expect("eq_shadow poisoned")
+            .reset_parameters();
         send_rt(&ctx, RealtimeCommand::ResetEq);
         log::info!("EQ reset.");
     });

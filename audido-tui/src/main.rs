@@ -24,15 +24,14 @@ mod router;
 mod routes;
 mod state;
 mod states;
-mod ui;
 mod themes;
+mod ui;
 
 use router::{Router, route_for_name, tab_names};
 use state::AppState;
 
 use crate::router::InterceptKeyResult;
 use crate::routes::playback::PlaybackRoute;
-use crate::state::StatefulList;
 
 fn main() -> anyhow::Result<()> {
     if !std::io::stdout().is_terminal() {
@@ -40,10 +39,21 @@ fn main() -> anyhow::Result<()> {
         let args: Vec<String> = std::env::args().skip(1).collect();
 
         #[cfg(target_os = "windows")]
-        Command::new("cmd").arg("/c").arg("start").arg("").arg(&exe).args(&args).spawn()?;
+        Command::new("cmd")
+            .arg("/c")
+            .arg("start")
+            .arg("")
+            .arg(&exe)
+            .args(&args)
+            .spawn()?;
 
         #[cfg(target_os = "macos")]
-        Command::new("open").arg("-a").arg("Terminal").arg(&exe).args(&args).spawn()?;
+        Command::new("open")
+            .arg("-a")
+            .arg("Terminal")
+            .arg(&exe)
+            .args(&args)
+            .spawn()?;
 
         #[cfg(target_os = "linux")]
         {
@@ -62,7 +72,13 @@ fn main() -> anyhow::Result<()> {
             let mut spawned = false;
 
             while let Some(&(term, flag)) = terminals.iter().next() {
-                if Command::new(term).arg(flag).arg(&exe).args(&args).spawn().is_ok() {
+                if Command::new(term)
+                    .arg(flag)
+                    .arg(&exe)
+                    .args(&args)
+                    .spawn()
+                    .is_ok()
+                {
                     spawned = true;
                     break;
                 }
@@ -106,7 +122,10 @@ fn run_tui(mut handle: CoreHandle, initial_files: Vec<String>) -> anyhow::Result
 
     // Wire up the spectrum SPSC: grab the consumer from the core and give it to the visualizer.
     let spectrum_consumer = handle.take_spectrum_consumer(state.audio.visualizer_config.bin_size);
-    state.audio.visualizer_config.attach_consumer(spectrum_consumer);
+    state
+        .audio
+        .visualizer_config
+        .attach_consumer(spectrum_consumer);
 
     // Subscribe to broadcast events from the audio core
     let mut event_rx = handle.subscribe();
@@ -115,20 +134,24 @@ fn run_tui(mut handle: CoreHandle, initial_files: Vec<String>) -> anyhow::Result
     setup_initial_state(&mut state, &handle, initial_files)?;
 
     loop {
+        state.browser.poll_search_results();
+
         // Drain all pending CoreEvents from the broadcast channel
         loop {
             match event_rx.try_recv() {
                 Ok(event) => {
                     // Trigger the recovery mechanism when the device invalidates
                     if matches!(event, CoreEvent::DeviceInvalidated) {
-                        log::info!("Device invalidated event received, attempting host recovery...");
+                        log::info!(
+                            "Device invalidated event received, attempting host recovery..."
+                        );
                         if let Err(e) = audido_core::modules::core::resolve_host(&mut handle) {
                             log::error!("Host recovery failed: {}", e);
                         }
                     }
-                    
+
                     state.handle_event(event);
-                },
+                }
                 Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
                 Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
                     log::warn!("Core event channel closed");
@@ -175,7 +198,11 @@ fn run_tui(mut handle: CoreHandle, initial_files: Vec<String>) -> anyhow::Result
 
     // Restore terminal
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
     terminal.show_cursor()?;
 
     Ok(())
@@ -209,21 +236,23 @@ fn setup_initial_state(
         if let Some(dir) = target_dir
             && let Ok(items) = browser::get_directory_content(&dir)
         {
-            state.browser.current_dir = dir.clone();
-            state.browser.files = StatefulList::new(items);
+            state.browser.replace_local_entries(dir.clone(), items);
             log::info!("Browser context set to: {:?}", state.browser.current_dir);
 
             if let Some(proj_dirs) = directories::ProjectDirs::from("com", "Audido", "AudidoTui") {
                 let cache_dir = proj_dirs.cache_dir();
                 let _ = std::fs::create_dir_all(cache_dir);
-                let _ = std::fs::write(cache_dir.join("last_dir.txt"), dir.to_string_lossy().as_ref());
+                let _ = std::fs::write(
+                    cache_dir.join("last_dir.txt"),
+                    dir.to_string_lossy().as_ref(),
+                );
             }
         }
     }
 
     log::info!("Adding {} files to queue from CLI", files.len());
     // Non-blocking: queue is populated by Tokio background task
-    
+
     let ctx = handle.ctx();
     let tokio_handle = handle.ctx().tokio_handle.clone();
 
@@ -267,7 +296,7 @@ fn handle_global_keys(
             let tabs = tab_names();
             let current_name = router.current().name();
             let current_idx = tabs.iter().position(|n| *n == current_name).unwrap_or(0);
-            let prev_idx = (( current_idx as i32 - 1) % tabs.len() as i32) as usize;
+            let prev_idx = (current_idx + tabs.len() - 1) % tabs.len();
             let prev_route = route_for_name(tabs[prev_idx]);
             router.replace(prev_route, state, handle)?;
             return Ok(false);

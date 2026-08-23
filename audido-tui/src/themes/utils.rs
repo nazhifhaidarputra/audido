@@ -1,14 +1,17 @@
 use image::{DynamicImage, GenericImageView};
-use ratatui::{style::{Color, Style}, text::{Line, Span}};
+use ratatui::{
+    style::{Color, Style},
+    text::{Line, Span},
+};
 
 /// Converts a DynamicImage into a vector of Ratatui Lines containing colored ASCII art.
 pub fn image_to_ascii_paragraph<'a>(img: &DynamicImage, width: u16, height: u16) -> Vec<Line<'a>> {
     let resized = img.resize_exact(
-        width as u32, 
-        height as u32, 
-        image::imageops::FilterType::Nearest
+        width as u32,
+        height as u32,
+        image::imageops::FilterType::Nearest,
     );
-    
+
     let ascii_chars = ['@', '%', '#', '*', '+', '=', '-', ':', '.', ' '];
     let mut lines = Vec::new();
 

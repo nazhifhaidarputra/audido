@@ -68,15 +68,12 @@ pub fn draw_queue_panel(f: &mut Frame, area: Rect, state: &AppState) {
                 .as_ref()
                 .and_then(|m| m.title.clone())
                 .unwrap_or_else(|| {
-                    item.path
-                        .file_name()
-                        .map(|s| s.to_string_lossy().to_string())
+                    item.source
+                        .get_path()
                         .unwrap_or_else(|| "Unknown".to_string())
                 });
             let style = if is_current {
-                Style::default()
-                    .fg(accent)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(accent).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::White)
             };
@@ -86,7 +83,7 @@ pub fn draw_queue_panel(f: &mut Frame, area: Rect, state: &AppState) {
         .collect();
 
     if items.is_empty() {
-        let empty_msg = Paragraph::new("Queue is empty. Add files from Browser.")
+        let empty_msg = Paragraph::new("Queue is empty. Add tracks from Browser.")
             .style(Style::default().fg(Color::DarkGray))
             .block(block);
         f.render_widget(empty_msg, area);

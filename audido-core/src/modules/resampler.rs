@@ -74,6 +74,78 @@ pub fn resample_to_device_rate(
     Ok(output)
 }
 
+/// Same logic as resample_to_device_rate, but
+/// processing block per block stream and send the processed block to the channel stream
+pub fn resample_to_device_rate_stream(
+    channels: u16,
+    input_rate: u32,
+    output_rate: u32,
+    rx: crossbeam_channel::Receiver<f32>,
+    tx: crossbeam_channel::Sender<f32>,
+) -> anyhow::Result<()> {
+    let channels = channels as usize;
+    let ratio = output_rate as f64 / input_rate as f64;
+
+    let mut resampler = Async::<f32>::new_poly(
+        ratio,
+        1.0,
+        PolynomialDegree::Cubic,
+        CHUNK_SIZE,
+        channels,
+        FixedAsync::Input,
+    )
+    .context("Failed to construct resampler")?;
+
+    let mut input_buffer = Vec::with_capacity(CHUNK_SIZE * channels);
+
+    for sample in rx {
+        input_buffer.push(sample);
+
+        if input_buffer.len() == CHUNK_SIZE * channels {
+            let input_adapter = InterleavedSlice::new(&input_buffer, channels, CHUNK_SIZE)
+                .context("Failed to build resampler input adapter")?;
+
+            let out_frames = resampler.process_all_needed_output_len(CHUNK_SIZE);
+            let mut out_buffer = vec![0.0f32; out_frames * channels];
+            let mut output_adapter =
+                InterleavedSlice::new_mut(&mut out_buffer, channels, out_frames)
+                    .context("Failed to build resampler output adapter")?;
+
+            let (_, frames_out) = resampler
+                .process_all_into_buffer(&input_adapter, &mut output_adapter, CHUNK_SIZE, None)
+                .context("Resampling failed")?;
+
+            for &s in &out_buffer[..frames_out * channels] {
+                if tx.send(s).is_err() {
+                    return Ok(());
+                }
+            }
+            input_buffer.clear();
+        }
+    }
+
+    let remaining_frames = input_buffer.len() / channels;
+    if remaining_frames > 0 {
+        let input_adapter = InterleavedSlice::new(&input_buffer, channels, remaining_frames)
+            .context("Failed to build resampler input adapter")?;
+
+        let out_frames = resampler.process_all_needed_output_len(remaining_frames);
+        let mut out_buffer = vec![0.0f32; out_frames * channels];
+        let mut output_adapter = InterleavedSlice::new_mut(&mut out_buffer, channels, out_frames)
+            .context("Failed to build resampler output adapter")?;
+
+        let (_, frames_out) = resampler
+            .process_all_into_buffer(&input_adapter, &mut output_adapter, remaining_frames, None)
+            .context("Resampling failed")?;
+
+        for &s in &out_buffer[..frames_out * channels] {
+            let _ = tx.send(s);
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

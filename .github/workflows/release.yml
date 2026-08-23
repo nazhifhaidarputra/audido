@@ -1,76 +1,285 @@
-name: Deploy Release
+name: Release
 
 on:
   push:
-    tags:
-      - "v*" # Triggers on tags like v1.0.0, v2.1.3, etc.
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v-prefixed tag to package
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    name: Build Binary (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            artifact_name: audido-linux
-            asset_name: audido-linux-x86_64
-          - os: windows-latest
-            artifact_name: audido-tui.exe
-            asset_name: audido-windows-x64.exe
-
+  metadata:
+    name: Validate release metadata
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Validate tag and package version
+        id: release
+        shell: bash
+        env:
+          REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          tag="$REQUESTED_TAG"
+          version="${tag#v}"
+          if [[ "$tag" != v* ]] || [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must look like v1.2.3 (received: $tag)" >&2
+            exit 1
+          fi
+          package_version=$(awk '/^\[workspace.package\]/{found=1; next} found && /^version = /{gsub(/"/, "", $3); print $3; exit}' Cargo.toml)
+          if [[ "$version" != "$package_version" ]]; then
+            echo "Tag version $version does not match workspace version $package_version" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  linux:
+    name: Package Linux
+    needs: metadata
+    runs-on: ubuntu-22.04
+    env:
+      VERSION: ${{ needs.metadata.outputs.version }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.metadata.outputs.tag }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes dpkg-dev libasound2-dev pkg-config
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Linux Dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev pkg-config
+      - name: Cache Cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: release-${{ runner.os }}-${{ runner.arch }}-
 
-      - name: Build Binary
-        run: cargo build --release --bin audido-tui
+      - name: Build binary
+        run: cargo build --release --bin audido-tui --locked
 
-      - name: Prepare Artifact
+      - name: Build tarball and Debian package
         shell: bash
         run: |
-          if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            cp target/release/audido-tui.exe ${{ matrix.asset_name }}
-          else
-            cp target/release/audido-tui ${{ matrix.asset_name }}
-          fi
+          set -euo pipefail
+          mkdir -p dist archive debian/DEBIAN debian/usr/bin debian/usr/share/doc/audido
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+          install -m 0755 target/release/audido-tui archive/audido-tui
+          install -m 0644 LICENSE README.md archive/
+          tar -C archive -czf "dist/audido-${VERSION}-linux-x86_64.tar.gz" .
+
+          install -m 0755 target/release/audido-tui debian/usr/bin/audido-tui
+          ln -s audido-tui debian/usr/bin/audido
+          install -m 0644 LICENSE debian/usr/share/doc/audido/copyright
+          gzip -9cn CHANGELOG.md > debian/usr/share/doc/audido/changelog.gz
+          sed "s/@VERSION@/${VERSION}/g" packaging/debian/control.in > debian/DEBIAN/control
+          dpkg-deb --root-owner-group --build debian "dist/audido_${VERSION}_amd64.deb"
+
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.asset_name }}
+          name: release-linux-x86_64
+          path: dist/*
+          if-no-files-found: error
 
-  release:
-    name: Create Release
-    needs: build
-    runs-on: ubuntu-latest
+  macos:
+    name: Package macOS (${{ matrix.arch }})
+    needs: metadata
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.metadata.outputs.version }}
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: macos-15
+            deployment_target: "11.0"
+          - arch: x86_64
+            runner: macos-15-intel
+            deployment_target: "10.13"
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.metadata.outputs.tag }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: release-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build binary
+        run: cargo build --release --bin audido-tui --locked
+
+      - name: Build tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist archive
+          install -m 0755 target/release/audido-tui archive/audido-tui
+          install -m 0644 LICENSE README.md archive/
+          tar -C archive -czf "dist/audido-${VERSION}-macos-${{ matrix.arch }}.tar.gz" .
+
+      - name: Upload macOS package
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-macos-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  windows:
+    name: Package Windows
+    needs: metadata
+    runs-on: windows-2025
+    env:
+      VERSION: ${{ needs.metadata.outputs.version }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.metadata.outputs.tag }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: release-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build binary
+        run: cargo build --release --bin audido-tui --locked
+
+      - name: Build portable zip and Inno Setup installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force dist, portable | Out-Null
+          Copy-Item target/release/audido-tui.exe "dist/audido-tui-${env:VERSION}-windows-x86_64.exe"
+          Copy-Item target/release/audido-tui.exe portable/
+          Copy-Item LICENSE, README.md portable/
+          Compress-Archive -Path portable/* -DestinationPath "dist/audido-${env:VERSION}-windows-x86_64.zip"
+
+          $iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+          if (-not $iscc) {
+            $isccPath = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+            if (-not (Test-Path $isccPath)) {
+              throw 'Inno Setup compiler was not found on the runner'
+            }
+            $iscc = $isccPath
+          }
+          & $iscc "/DMyAppVersion=${env:VERSION}" "/DMyOutputDir=..\dist" audido-tui/setup.iss
+
+      - name: Upload Windows packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-windows-x86_64
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [metadata, linux, macos, windows]
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
-
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Download Artifacts
-        uses: actions/download-artifact@v4
+      - name: Checkout source
+        uses: actions/checkout@v6
         with:
-          path: ./artifacts
+          ref: ${{ needs.metadata.outputs.tag }}
+
+      - name: Download packages
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
           merge-multiple: true
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+      - name: Add installer, Scoop manifest, and checksums
+        shell: bash
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          install -m 0755 install.sh dist/install.sh
+          zip_name="audido-${VERSION}-windows-x86_64.zip"
+          zip_hash=$(sha256sum "dist/${zip_name}" | awk '{print $1}')
+          url="https://github.com/${REPOSITORY}/releases/download/${TAG}/${zip_name}"
+          jq -n \
+            --arg version "$VERSION" \
+            --arg url "$url" \
+            --arg hash "$zip_hash" \
+            --arg repository "$REPOSITORY" \
+            '{
+              version: $version,
+              description: "A terminal-based audio player with queue management",
+              homepage: ("https://github.com/" + $repository),
+              license: "GPL-3.0-or-later",
+              architecture: {"64bit": {url: $url, hash: $hash}},
+              depends: ["ffmpeg", "yt-dlp"],
+              bin: [["audido-tui.exe", "audido"], "audido-tui.exe"],
+              checkver: {github: ("https://github.com/" + $repository)},
+              autoupdate: {
+                architecture: {
+                  "64bit": {
+                    url: ("https://github.com/" + $repository + "/releases/download/v$version/audido-$version-windows-x86_64.zip")
+                  }
+                }
+              }
+            }' > dist/audido.json
+          (cd dist && sha256sum * > SHA256SUMS)
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ needs.metadata.outputs.tag }}
+          name: Audido ${{ needs.metadata.outputs.version }}
           body_path: CHANGELOG.md
-          draft: false
-          prerelease: false
-          files: ./artifacts/*
+          prerelease: ${{ contains(needs.metadata.outputs.version, '-') }}
+          fail_on_unmatched_files: true
+          files: dist/*

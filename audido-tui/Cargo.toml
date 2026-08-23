@@ -1,9 +1,10 @@
 [package]
 name = "audido-tui"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 description = "A terminal-based audio player with queue management"
-license = "GPL-3.0-or-later"
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 ratatui = "0.30.0"
@@ -18,8 +19,10 @@ strum = { version = "0.27", features = ["derive"] }
 fern = "0.7.1"
 chrono = "0.4.43"
 lazy_static = "1.5.0"
-ratatui-image = "11.0.6"
+ratatui-image = { version = "11.0.6", default-features = false, features = ["crossterm", "image-defaults"] }
 image = "0.25.0"
 ringbuf = "0.5.1"
 directories = "6.0.0"
 ratatui-hypertile = "0.4.1"
+tempfile = "3.27.0"
+reqwest = "0.13.4"

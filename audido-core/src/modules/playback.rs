@@ -62,15 +62,34 @@ pub fn seek(ctx: Arc<CoreContext>, seconds: f32) {
         let channels = ctx.atomics.num_channels.load(Ordering::Relaxed) as usize;
         let total = ctx.atomics.total_samples.load(Ordering::Relaxed);
 
-        let target_sample = ((seconds * sample_rate) as usize * channels).min(total);
+        let requested_sample = ((seconds.max(0.0) * sample_rate) as usize * channels).min(total);
+        let buffered = ctx
+            .current_audio
+            .lock()
+            .expect("current_audio poisoned")
+            .as_ref()
+            .map_or(0, |audio| audio.buffered_samples());
+        let mut target_sample = requested_sample.min(buffered);
+        if channels > 0 {
+            target_sample -= target_sample % channels;
+        }
         ctx.atomics
             .position_samples
             .store(target_sample, Ordering::Release);
+        // Discard samples prefetched before this seek. The DSP loop will refill
+        // the output ring beginning at the new retained-buffer cursor.
+        ctx.atomics.clear_buffer.store(true, Ordering::Release);
 
         if let Some(tx) = ctx.rt_cmd_tx.lock().unwrap().as_ref() {
             let _ = tx.send(RealtimeCommand::SeekToFrame(target_sample));
         }
-        log::info!("Seeked to {:.2}s (sample {})", seconds, target_sample);
+        log::info!(
+            "Seeked to {:.2}s (sample {}, requested sample {}, buffered {})",
+            target_sample as f32 / (sample_rate * channels.max(1) as f32),
+            target_sample,
+            requested_sample,
+            buffered
+        );
     });
 }
 
@@ -101,10 +120,11 @@ pub(crate) async fn stop_inner(ctx: &CoreContext) {
 
 /// Load and start playing the queue item at `index`.
 pub(crate) async fn play_queue_index_inner(ctx: Arc<CoreContext>, index: usize) {
-    let path: std::path::PathBuf = {
+    // Snapshot the source variant while holding the queue lock briefly.
+    let source = {
         let queue = ctx.queue.lock().expect("queue poisoned");
         match queue.get(index) {
-            Some(item) => item.path.clone(),
+            Some(item) => item.source.clone(),
             None => {
                 ctx.emit(CoreEvent::Error(format!("Invalid queue index: {}", index)));
                 return;
@@ -112,24 +132,48 @@ pub(crate) async fn play_queue_index_inner(ctx: Arc<CoreContext>, index: usize) 
         }
     };
 
-    log::info!("Loading queue index {} — {:?}", index, path);
+    log::info!("Loading queue index {} — {:?}", index, source);
     stop_inner(&ctx).await;
 
-    let path_str = path.to_string_lossy().to_string();
     let device_sample_rate = ctx.atomics.device_sample_rate.load(Ordering::Relaxed);
-    let audio_data = match tokio::task::spawn_blocking(move || {
-        crate::source::AudioPlaybackData::load_local_audio(&path_str, Some(device_sample_rate))
-    })
-    .await
-    {
-        Ok(Ok(data)) => data,
-        Ok(Err(e)) => {
-            ctx.emit(CoreEvent::Error(format!("Failed to load audio: {}", e)));
-            return;
+
+    let audio_data = match source {
+        crate::source::AudioSource::Local { path } => {
+            let path_str = path.to_string_lossy().to_string();
+            match tokio::task::spawn_blocking(move || {
+                crate::source::AudioPlaybackData::load_local_audio(
+                    &path_str,
+                    Some(device_sample_rate),
+                )
+            })
+            .await
+            {
+                Ok(Ok(data)) => data,
+                Ok(Err(e)) => {
+                    ctx.emit(CoreEvent::Error(format!("Failed to load audio: {}", e)));
+                    return;
+                }
+                Err(e) => {
+                    ctx.emit(CoreEvent::Error(format!("Load task panicked: {}", e)));
+                    return;
+                }
+            }
         }
-        Err(e) => {
-            ctx.emit(CoreEvent::Error(format!("Load task panicked: {}", e)));
-            return;
+        crate::source::AudioSource::Youtube { url } => {
+            match ctx
+                .yt
+                .load_youtube_stream(&url, Some(device_sample_rate))
+                .await
+            {
+                Ok(data) => data,
+                Err(e) => {
+                    ctx.emit(CoreEvent::Error(format!(
+                        "Failed to load YouTube stream: {}",
+                        e
+                    )));
+                    return;
+                }
+            }
         }
     };
 
@@ -248,22 +292,53 @@ fn run_dsp_feed_loop(ctx: Arc<CoreContext>, rt_rx: crossbeam_channel::Receiver<R
             }
         }
 
+        // Acquire the buffer variant — we clone the enum (cheap for both variants)
+        // so we don't hold the mutex across the blocking recv below.
         let buffer = {
             let audio = ctx.current_audio.lock().expect("current_audio poisoned");
             match audio.as_ref() {
-                Some(d) => d.buffer(),
+                Some(d) => d.buffer().clone(),
                 None => break,
             }
         };
 
         let pos = ctx.atomics.position_samples.load(Ordering::Relaxed);
-        if pos >= buffer.len() {
-            break;
-        }
 
-        let end = (pos + CHUNK_SIZE).min(buffer.len());
         chunk.clear();
-        chunk.extend_from_slice(&buffer[pos..end]);
+        match &buffer {
+            crate::source::AudioBuffer::InMemory(samples) => {
+                // Fast path: the full decoded buffer is already in memory.
+                if pos >= samples.len() {
+                    break; // end of track
+                }
+                let end = (pos + CHUNK_SIZE).min(samples.len());
+                chunk.extend_from_slice(&samples[pos..end]);
+            }
+            crate::source::AudioBuffer::Stream(samples) => {
+                let channels = ctx.atomics.num_channels.load(Ordering::Relaxed) as usize;
+                let available = samples.buffered_samples().saturating_sub(pos);
+                let complete_frames = available
+                    .checked_div(channels)
+                    .map_or(available, |frames| frames * channels);
+                samples.copy_from(pos, CHUNK_SIZE.min(complete_frames), &mut chunk);
+
+                if chunk.is_empty() {
+                    if samples.is_complete() {
+                        log::debug!("DSP loop: retained stream exhausted — end of track.");
+                        ctx.atomics.position_samples.store(
+                            ctx.atomics.total_samples.load(Ordering::Relaxed),
+                            Ordering::Release,
+                        );
+                        break;
+                    }
+
+                    // Playback has caught the decoder. Keep the current cursor
+                    // stable until another retained batch becomes available.
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                    continue;
+                }
+            }
+        }
 
         ctx.atomics
             .position_samples
@@ -308,4 +383,3 @@ fn run_dsp_feed_loop(ctx: Arc<CoreContext>, rt_rx: crossbeam_channel::Receiver<R
 
     log::debug!("DSP feed loop ended.");
 }
-

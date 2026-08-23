@@ -1,5 +1,8 @@
 use crate::{
-    dsp::{eq::{EqPreset, FilterNode}, normalization::NormalizationMode},
+    dsp::{
+        eq::{EqPreset, FilterNode},
+        normalization::NormalizationMode,
+    },
     metadata::AudioMetadata,
     queue::{LoopMode, QueueItem},
 };
@@ -17,10 +20,11 @@ pub enum CoreEvent {
     Stopped,
     /// Audio file loaded successfully with metadata
     Loaded(AudioMetadata),
-    /// Current playback position in seconds and total duration
+    /// Current playback position, total duration, and decoded/seekable extent.
     Position {
         current: f32,
         total: f32,
+        buffered: f32,
     },
     /// Queue contents changed
     QueueUpdated(Vec<QueueItem>),

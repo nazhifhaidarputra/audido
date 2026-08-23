@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use audido_core::modules::{self, core::{CoreContext, CoreHandle}};
+use audido_core::modules::{
+    self,
+    core::{CoreContext, CoreHandle},
+};
 use ratatui::{
     Frame,
     crossterm::event::KeyCode,
@@ -107,7 +110,11 @@ pub fn draw_playback_panel(f: &mut Frame, area: Rect, state: &AppState) {
         .constraints([
             Constraint::Length(16), // Now playing info
             Constraint::Min(8),     // Spectrum visualizer
-            Constraint::Length(3),  // Progress bar
+            Constraint::Length(if state.audio.is_youtube_stream() {
+                6
+            } else {
+                3
+            }),
         ])
         .split(area);
 
@@ -237,12 +244,43 @@ fn draw_progress(f: &mut Frame, area: Rect, audio_state: &AudioState, accent: Co
     let label = format!("{} / {}", position_str, duration_str);
 
     let gauge = Gauge::default()
-        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(accent)))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(accent)),
+        )
         .gauge_style(Style::default().fg(accent).bg(Color::DarkGray))
         .percent(progress_pct)
         .label(label);
 
-    f.render_widget(gauge, area);
+    if !audio_state.is_youtube_stream() {
+        f.render_widget(gauge, area);
+        return;
+    }
+
+    let gauges = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Length(3)])
+        .split(area);
+    f.render_widget(gauge, gauges[0]);
+
+    let buffered_pct = (audio_state.buffered_progress() * 100.0) as u16;
+    let buffered_label = format!(
+        "Buffered {} / {}",
+        AudioState::format_time(audio_state.buffered),
+        duration_str
+    );
+    let buffered_gauge = Gauge::default()
+        .block(
+            Block::default()
+                .title(" YouTube buffer ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(accent)),
+        )
+        .gauge_style(Style::default().fg(Color::Cyan).bg(Color::DarkGray))
+        .percent(buffered_pct)
+        .label(buffered_label);
+    f.render_widget(buffered_gauge, gauges[1]);
 }
 
 /// Draw bar spectrum for the audio visualizer.

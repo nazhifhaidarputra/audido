@@ -1,6 +1,5 @@
 use std::fs::canonicalize;
 use std::io::IsTerminal;
-#[cfg(target_os = "linux")]
 use std::process::Command;
 use std::time::Duration;
 use std::{io, path::PathBuf};

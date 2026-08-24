@@ -47,6 +47,10 @@ jobs:
             echo "Tag version $version does not match workspace version $package_version" >&2
             exit 1
           fi
+          if ! grep -Fq "## [$version]" CHANGELOG.md; then
+            echo "CHANGELOG.md has no release section for $version" >&2
+            exit 1
+          fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 

@@ -1,4 +1,10 @@
-# CHANGELOG v0.1.1
+# Changelog
+
+## [Unreleased]
+
+## [0.1.2] - 2026-08-24
+
+## [0.1.1]
 
 - Add Youtube Playback
 

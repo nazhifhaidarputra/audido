@@ -15,7 +15,7 @@ Install Audido from a GitHub release.
 Usage: install.sh [options]
 
 Options:
-  --version VERSION    Install a specific version (for example, 0.1.1)
+  --version VERSION    Install a specific version (for example, 1.2.3)
   --prefix DIRECTORY  Install into DIRECTORY/bin
   --install-dir DIR   Install executables directly into DIR
   --from-source       Build locally instead of using a release binary

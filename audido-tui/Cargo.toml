@@ -25,4 +25,4 @@ ringbuf = "0.5.1"
 directories = "6.0.0"
 ratatui-hypertile = "0.4.1"
 tempfile = "3.27.0"
-reqwest = "0.13.4"
+reqwest = { workspace = true, features = ["blocking"] }

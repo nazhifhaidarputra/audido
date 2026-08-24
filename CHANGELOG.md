@@ -8,4 +8,3 @@
 - Add tempo detector
 - Add time-stretcher and pitch shifter
 - Add audio normalization
-- Add integration with youtube player via youtube-dl

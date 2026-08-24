@@ -17,7 +17,7 @@ use crate::{
     router::{RouteAction, RouteHandler},
     state::AppState,
     states::AudioState,
-    themes::CoverArt,
+    themes::{CoverArtRenderMode, image_to_ascii_paragraph},
 };
 
 // ==================================================================
@@ -110,11 +110,7 @@ pub fn draw_playback_panel(f: &mut Frame, area: Rect, state: &AppState) {
         .constraints([
             Constraint::Length(16), // Now playing info
             Constraint::Min(8),     // Spectrum visualizer
-            Constraint::Length(if state.audio.is_youtube_stream() {
-                6
-            } else {
-                3
-            }),
+            Constraint::Length(3),
         ])
         .split(area);
 
@@ -180,54 +176,46 @@ fn draw_now_playing(f: &mut Frame, area: Rect, state: &AppState) {
             f.render_widget(image_widget, image_area);
             f.render_widget(paragraph, inner_chunks[2]);
         } else {
-            // No embedded cover — fall back to theme default_cover
-            match &theme.default_cover {
-                CoverArt::AsciiArt(art_lines) => {
-                    let inner_chunks = Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([
-                            Constraint::Length(30), // ASCII art panel
-                            Constraint::Length(1),  // Margin
-                            Constraint::Min(0),     // Metadata text
-                        ])
-                        .split(inner);
+            // No embedded cover — render the theme image in its configured mode.
+            let cover = &theme.default_cover;
+            let can_render = match cover.render_mode {
+                CoverArtRenderMode::Ascii => cover.source_image.is_some(),
+                CoverArtRenderMode::NormalImage => cover.protocol.is_some(),
+            };
 
-                    let art_block = Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(theme.foreground_color));
+            if !can_render {
+                f.render_widget(paragraph, inner);
+                return;
+            }
 
-                    let art_inner = art_block.inner(inner_chunks[0]);
-                    f.render_widget(art_block, inner_chunks[0]);
+            let inner_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Length(30),
+                    Constraint::Length(1),
+                    Constraint::Min(0),
+                ])
+                .split(inner);
+            let cover_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.foreground_color));
+            let cover_area = cover_block.inner(inner_chunks[0]);
+            f.render_widget(cover_block, inner_chunks[0]);
 
-                    let ascii_paragraph = Paragraph::new(art_lines.clone());
-                    f.render_widget(ascii_paragraph, art_inner);
-
-                    f.render_widget(paragraph, inner_chunks[2]);
+            match cover.render_mode {
+                CoverArtRenderMode::Ascii => {
+                    let image = cover.source_image.as_ref().expect("checked above");
+                    let lines =
+                        image_to_ascii_paragraph(image, cover_area.width, cover_area.height);
+                    f.render_widget(Paragraph::new(lines), cover_area);
                 }
-                CoverArt::Image(protocol) => {
-                    let inner_chunks = Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([
-                            Constraint::Length(30),
-                            Constraint::Length(1),
-                            Constraint::Min(0),
-                        ])
-                        .split(inner);
-
-                    let image_block = Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::DarkGray));
-
-                    let image_area = image_block.inner(inner_chunks[0]);
-                    f.render_widget(image_block, inner_chunks[0]);
-                    let image_widget = ratatui_image::Image::new(protocol);
-                    f.render_widget(image_widget, image_area);
-                    f.render_widget(paragraph, inner_chunks[2]);
-                }
-                CoverArt::None => {
-                    f.render_widget(paragraph, inner);
+                CoverArtRenderMode::NormalImage => {
+                    let protocol = cover.protocol.as_ref().expect("checked above");
+                    f.render_widget(ratatui_image::Image::new(protocol), cover_area);
                 }
             }
+
+            f.render_widget(paragraph, inner_chunks[2]);
         }
     } else {
         let text = Paragraph::new("No audio loaded").style(Style::default().fg(Color::DarkGray));
@@ -237,50 +225,78 @@ fn draw_now_playing(f: &mut Frame, area: Rect, state: &AppState) {
 
 /// Draw the progress bar
 fn draw_progress(f: &mut Frame, area: Rect, audio_state: &AudioState, accent: Color) {
-    let progress_pct = (audio_state.progress() * 100.0) as u16;
-    let position_str = AudioState::format_time(audio_state.position);
-    let duration_str = AudioState::format_time(audio_state.duration);
+        let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(accent));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
 
-    let label = format!("{} / {}", position_str, duration_str);
-
-    let gauge = Gauge::default()
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(accent)),
-        )
-        .gauge_style(Style::default().fg(accent).bg(Color::DarkGray))
-        .percent(progress_pct)
-        .label(label);
-
-    if !audio_state.is_youtube_stream() {
-        f.render_widget(gauge, area);
+    if inner.width == 0 || inner.height == 0 {
         return;
     }
 
-    let gauges = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Length(3)])
-        .split(area);
-    f.render_widget(gauge, gauges[0]);
+    let progress = audio_state.progress().clamp(0.0, 1.0);
+    let buffered = if audio_state.is_youtube_stream() {
+        audio_state.buffered_progress().clamp(progress, 1.0)
+    } else {
+        progress
+    };
 
-    let buffered_pct = (audio_state.buffered_progress() * 100.0) as u16;
-    let buffered_label = format!(
-        "Buffered {} / {}",
-        AudioState::format_time(audio_state.buffered),
-        duration_str
-    );
-    let buffered_gauge = Gauge::default()
-        .block(
-            Block::default()
-                .title(" YouTube buffer ")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(accent)),
+    let played_end = ((inner.width as f32 * progress).round() as u16).min(inner.width);
+    let buffered_end = ((inner.width as f32 * buffered).round() as u16).min(inner.width);
+
+    // Paint one continuous track:
+    // accent = already played, cyan = buffered ahead, dark gray = not buffered yet.
+    if played_end > 0 {
+        f.render_widget(
+            Block::default().style(Style::default().bg(accent)),
+            Rect::new(inner.x, inner.y, played_end, inner.height),
+        );
+    }
+
+    if buffered_end > played_end {
+        f.render_widget(
+            Block::default().style(Style::default().bg(Color::Gray)),
+            Rect::new(
+                inner.x + played_end,
+                inner.y,
+                buffered_end - played_end,
+                inner.height,
+            ),
+        );
+    }
+
+    if buffered_end < inner.width {
+        f.render_widget(
+            Block::default().style(Style::default().bg(Color::DarkGray)),
+            Rect::new(
+                inner.x + buffered_end,
+                inner.y,
+                inner.width - buffered_end,
+                inner.height,
+            ),
+        );
+    }
+
+    let position_str = AudioState::format_time(audio_state.position);
+    let duration_str = AudioState::format_time(audio_state.duration);
+    let label = if audio_state.is_youtube_stream() {
+        format!(
+            "{} / {} · buffered {}",
+            position_str,
+            duration_str,
+            AudioState::format_time(audio_state.buffered),
         )
-        .gauge_style(Style::default().fg(Color::Cyan).bg(Color::DarkGray))
-        .percent(buffered_pct)
-        .label(buffered_label);
-    f.render_widget(buffered_gauge, gauges[1]);
+    } else {
+        format!("{} / {}", position_str, duration_str)
+    };
+
+    f.render_widget(
+        Paragraph::new(label)
+            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
+            .centered(),
+        inner,
+    );
 }
 
 /// Draw bar spectrum for the audio visualizer.

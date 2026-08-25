@@ -130,7 +130,7 @@ fn draw_controls(f: &mut Frame, area: Rect, state: &AppState, router: &crate::ro
                 Span::raw(" Next/Prev  "),
                 Span::styled("[L]", Style::default().fg(theme.font_color)),
                 Span::raw(" Loop  "),
-                Span::styled("[Tab]", Style::default().fg(Color::Magenta)),
+                Span::styled("[Tab]", Style::default().fg(theme.font_color)),
                 Span::raw(" Switch Tab  "),
                 Span::styled("[Q]", Style::default().fg(Color::Red)),
                 Span::raw(" Quit"),
@@ -140,7 +140,7 @@ fn draw_controls(f: &mut Frame, area: Rect, state: &AppState, router: &crate::ro
             vec![
                 Span::styled("[↑/↓]", Style::default().fg(theme.font_color)),
                 Span::raw(" Scroll  "),
-                Span::styled("[Tab]", Style::default().fg(Color::Magenta)),
+                Span::styled("[Tab]", Style::default().fg(theme.font_color)),
                 Span::raw(" Switch Tab  "),
                 Span::styled("[Q]", Style::default().fg(Color::Red)),
                 Span::raw(" Quit"),
@@ -152,7 +152,7 @@ fn draw_controls(f: &mut Frame, area: Rect, state: &AppState, router: &crate::ro
                 Span::raw(" Nav  "),
                 Span::styled("[Enter]", Style::default().fg(theme.font_color)),
                 Span::raw(" Select  "),
-                Span::styled("[Tab]", Style::default().fg(Color::Magenta)),
+                Span::styled("[Tab]", Style::default().fg(theme.font_color)),
                 Span::raw(" Switch Tab  "),
                 Span::styled("[Q]", Style::default().fg(Color::Red)),
                 Span::raw(" Quit"),
@@ -164,7 +164,7 @@ fn draw_controls(f: &mut Frame, area: Rect, state: &AppState, router: &crate::ro
                 Span::raw(" Navigate  "),
                 Span::styled("[Enter]", Style::default().fg(theme.font_color)),
                 Span::raw(" Select  "),
-                Span::styled("[Tab]", Style::default().fg(Color::Magenta)),
+                Span::styled("[Tab]", Style::default().fg(theme.font_color)),
                 Span::raw(" Switch Tab  "),
                 Span::styled("[Q]", Style::default().fg(Color::Red)),
                 Span::raw(" Quit"),
@@ -186,9 +186,25 @@ fn draw_controls(f: &mut Frame, area: Rect, state: &AppState, router: &crate::ro
                 Span::raw(" Quit"),
             ]
         }
+        "Normalization" => {
+            vec![
+                Span::styled("[↑/↓]", Style::default().fg(theme.font_color)),
+                Span::raw(" Navigate  "),
+                Span::styled("[←/→]", Style::default().fg(theme.font_color)),
+                Span::raw(" Adjust  "),
+                Span::styled("[T]", Style::default().fg(theme.font_color)),
+                Span::raw(" Toggle  "),
+                Span::styled("[M]", Style::default().fg(theme.font_color)),
+                Span::raw(" Mode  "),
+                Span::styled("[Esc]", Style::default().fg(theme.font_color)),
+                Span::raw(" Back  "),
+                Span::styled("[Q]", Style::default().fg(Color::Red)),
+                Span::raw(" Quit"),
+            ]
+        }
         _ => {
             vec![
-                Span::styled("[Tab]", Style::default().fg(Color::Magenta)),
+                Span::styled("[Tab]", Style::default().fg(theme.font_color)),
                 Span::raw(" Switch Tab  "),
                 Span::styled("[Q]", Style::default().fg(Color::Red)),
                 Span::raw(" Quit"),

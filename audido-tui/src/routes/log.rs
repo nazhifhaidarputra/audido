@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-
 use audido_core::modules::core::CoreHandle;
 use ratatui::{
     Frame,
@@ -20,7 +18,7 @@ use crate::{
 #[derive(Debug)]
 pub struct LogRoute {
     // RefCell allows mutation even when we only have &self in render()
-    list_state: RefCell<ListState>,
+    list_state: ListState,
     // Track if user is sticking to the bottom
     stick_to_bottom: bool,
 }
@@ -28,16 +26,17 @@ pub struct LogRoute {
 impl LogRoute {
     pub fn new() -> Self {
         Self {
-            list_state: RefCell::new(ListState::default()),
+            list_state: ListState::default(),
             stick_to_bottom: true,
         }
     }
 }
 
 impl RouteHandler for LogRoute {
-    fn render(&mut self, frame: &mut Frame, area: Rect, _state: &AppState) {
+    fn render(&mut self, frame: &mut Frame, area: Rect, state: &AppState) {
         let buffer = LOG_BUFFER.lock().unwrap();
 
+        let accent = &state.theme.foreground_color;
         let items: Vec<ListItem> = buffer
             .iter()
             .map(|record| {
@@ -61,16 +60,13 @@ impl RouteHandler for LogRoute {
                 Block::default()
                     .title(" 📋 Log (Up/Down to Scroll) ")
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Cyan)),
+                    .border_style(Style::default().fg(*accent)),
             )
             .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
         // Borrow the state mutably to pass it to the widget
-        let mut state = self.list_state.borrow_mut();
+        let state = &mut self.list_state;
 
-        // Auto-scroll logic inside render:
-        // If we are sticky, ensure we are selecting the newest item *before* drawing.
-        // This ensures that if new logs come in (without key presses), we still scroll to them.
         if self.stick_to_bottom && !buffer.is_empty() {
             state.select(Some(buffer.len() - 1));
         }
@@ -89,7 +85,7 @@ impl RouteHandler for LogRoute {
             return Ok(RouteAction::None);
         }
 
-        let mut state = self.list_state.borrow_mut();
+        let state = &mut self.list_state;
 
         match key {
             KeyCode::Up => {

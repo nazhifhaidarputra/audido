@@ -3,8 +3,9 @@ use ratatui::{Frame, layout::Rect};
 
 use crate::{
     routes::{
-        browser::BrowserRoute, eq::EqualizerRoute, log::LogRoute, playback::PlaybackRoute,
-        queue::QueueRoute, settings::SettingsRoute,
+        browser::BrowserRoute, eq::EqualizerRoute, log::LogRoute,
+        normalization::NormalizationRoute, playback::PlaybackRoute, queue::QueueRoute,
+        settings::SettingsRoute,
     },
     state::AppState,
 };
@@ -222,6 +223,7 @@ pub fn route_for_name(name: &str) -> Box<dyn RouteHandler> {
         "Settings" => Box::new(SettingsRoute),
         "Log" => Box::new(LogRoute::new()),
         "Equalizer" => Box::new(EqualizerRoute::default()),
+        "Normalization" => Box::new(NormalizationRoute::default()),
         _ => Box::new(PlaybackRoute),
     }
 }

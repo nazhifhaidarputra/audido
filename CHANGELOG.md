@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-25
+
+- Add normalization
+
+**TODO**
+
+- FIX Song Key detection
+- Add tempo detector
+- Add time-stretcher and pitch shifter
+
 ## [0.1.2] - 2026-08-24
 
 - Add dynamic Handling

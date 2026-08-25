@@ -18,6 +18,9 @@ pub struct EqState {
 }
 
 impl EqState {
+    const MIN_MASTER_GAIN_DB: f32 = -12.0;
+    const MAX_MASTER_GAIN_DB: f32 = 12.0;
+
     pub fn new() -> Self {
         Self {
             eq_enabled: false,
@@ -41,5 +44,34 @@ impl EqState {
             EqMode::Casual => EqMode::Advanced,
             EqMode::Advanced => EqMode::Casual,
         };
+    }
+
+    /// Adjust the master gain while keeping it inside the range supported by the UI.
+    pub fn adjust_master_gain(&mut self, delta_db: f32) {
+        self.local_master_gain = (self.local_master_gain + delta_db)
+            .clamp(Self::MIN_MASTER_GAIN_DB, Self::MAX_MASTER_GAIN_DB);
+    }
+
+    /// Format the master gain consistently wherever it is displayed.
+    pub fn master_gain_label(&self) -> String {
+        format!("{:+.1} dB", self.local_master_gain)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EqState;
+
+    #[test]
+    fn master_gain_is_clamped_and_formatted() {
+        let mut state = EqState::new();
+
+        assert_eq!(state.master_gain_label(), "+0.0 dB");
+
+        state.adjust_master_gain(20.0);
+        assert_eq!(state.master_gain_label(), "+12.0 dB");
+
+        state.adjust_master_gain(-30.0);
+        assert_eq!(state.master_gain_label(), "-12.0 dB");
     }
 }

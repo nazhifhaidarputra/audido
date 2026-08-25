@@ -59,7 +59,7 @@ pub fn get_level_style(level: Level) -> Style {
     match level {
         Level::Error => Style::default().fg(Color::Red),
         Level::Warn => Style::default().fg(Color::Yellow),
-        Level::Info => Style::default().fg(Color::Cyan),
+        Level::Info => Style::default().fg(Color::Gray),
         Level::Debug => Style::default().fg(Color::Green),
         Level::Trace => Style::default().fg(Color::Magenta),
     }

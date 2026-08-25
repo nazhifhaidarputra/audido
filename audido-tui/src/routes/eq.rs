@@ -6,11 +6,14 @@ use audido_core::{
 use ratatui::{
     Frame,
     crossterm::event::KeyCode,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     symbols,
     text::{Line, Span},
-    widgets::{Axis, Block, Borders, Chart, Dataset, GraphType, List, ListItem, Paragraph},
+    widgets::{
+        Block, Borders, List, ListItem, Paragraph,
+        canvas::{Canvas, Context as CanvasContext, Line as CanvasLine, Points},
+    },
 };
 use strum::VariantArray;
 
@@ -20,8 +23,6 @@ use crate::{
     states::{AudioState, EqMode, EqState},
     ui::{draw_generic_dialog, open_modal},
 };
-
-// ── Local UI types (owned by EqualizerRoute) ──────────────────────────────
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum EqFocus {
@@ -72,8 +73,6 @@ pub enum EqDialogState {
         selected_dialog_option: EqDialogOption,
     },
 }
-
-// ── Equalizer route ───────────────────────────────────────────────────────
 
 /// Equalizer route
 #[derive(Debug, Clone)]
@@ -371,7 +370,7 @@ impl EqualizerRoute {
             KeyCode::Up => {
                 match self.eq_focus {
                     EqFocus::CurvePanel => {
-                        state.eq.local_master_gain = (state.eq.local_master_gain + 0.5).min(12.0);
+                        state.eq.adjust_master_gain(0.5);
                         modules::dsp::set_master_gain(handle.ctx(), state.eq.local_master_gain);
                     }
                     EqFocus::BandPanel => {
@@ -388,7 +387,7 @@ impl EqualizerRoute {
             }
             KeyCode::Down => match self.eq_focus {
                 EqFocus::CurvePanel => {
-                    state.eq.local_master_gain = (state.eq.local_master_gain - 0.5).max(-12.0);
+                    state.eq.adjust_master_gain(-0.5);
                     modules::dsp::set_master_gain(handle.ctx(), state.eq.local_master_gain);
                 }
                 EqFocus::BandPanel => {
@@ -516,8 +515,6 @@ impl RouteHandler for EqualizerRoute {
     }
 }
 
-// ── Draw helpers ──────────────────────────────────────────────────────────
-
 pub fn draw_eq_panel(
     f: &mut Frame,
     area: Rect,
@@ -545,7 +542,14 @@ pub fn draw_eq_panel(
         .split(inner);
 
     draw_eq_mode_toggle(f, chunks[0], eq_state);
-    draw_eq_graph(f, chunks[1], eq_state, audio_state, eq_focus);
+    draw_eq_graph(
+        f,
+        chunks[1],
+        eq_state,
+        audio_state,
+        eq_focus,
+        eq_selected_band,
+    );
     draw_eq_controls(f, chunks[2], eq_state, eq_focus, eq_selected_band);
 }
 
@@ -651,16 +655,10 @@ fn draw_eq_controls(
         f.render_widget(preset_paragraph, chunks[0]);
 
         // Master gain
-        let gain_value = eq_state.local_master_gain;
-        let gain_display = if gain_value >= 0.0 {
-            format!("+{:.1} dB", gain_value)
-        } else {
-            format!("{:.1} dB", gain_value)
-        };
         let gain_paragraph = Paragraph::new(Line::from(vec![
             Span::styled("Master: ", Style::default().fg(Color::Gray)),
             Span::styled(
-                gain_display,
+                eq_state.master_gain_label(),
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
@@ -791,7 +789,12 @@ fn draw_eq_graph(
     eq_state: &EqState,
     audio_state: &AudioState,
     eq_focus: EqFocus,
+    eq_selected_band: usize,
 ) {
+    const RESPONSE_POINT_COUNT: usize = 256;
+    const MIN_GAIN_DB: f64 = -18.0;
+    const MAX_GAIN_DB: f64 = 18.0;
+
     // Create a temporary Equalizer to compute the response curve
     let sample_rate = audio_state
         .metadata
@@ -802,48 +805,40 @@ fn draw_eq_graph(
     eq.master_gain = (10.0f32).powf(eq_state.local_master_gain / 20.0); // Convert dB to linear
     eq.parameters_changed();
 
-    let width = 100;
-    let data = eq.get_response_curve(100);
+    let data = eq.get_response_curve(RESPONSE_POINT_COUNT);
 
     // Transform to log scale for x-axis (frequency)
-    // log10(20) ≈ 1.3, log10(20000) ≈ 4.3
     let data_points: Vec<(f64, f64)> = data
         .iter()
         .map(|(freq, db)| ((*freq as f64).log10(), *db as f64))
         .collect();
 
-    // log::debug!("{:?}", data_points);
+    let filter_curves: Vec<Vec<(f64, f64)>> = eq_state
+        .local_filters
+        .iter()
+        .map(|filter| {
+            let mut curve_points = Vec::with_capacity(RESPONSE_POINT_COUNT);
+            let start_freq: f32 = 20.0;
+            let end_freq: f32 = 20000.0;
+            let log_start = start_freq.ln();
+            let log_end = end_freq.ln();
+            let step = (log_end - log_start) / (RESPONSE_POINT_COUNT as f32 - 1.0);
 
-    let mut filter_curves: Vec<Vec<(f64, f64)>> = Vec::new();
+            for i in 0..RESPONSE_POINT_COUNT {
+                let log_f = log_start + step * (i as f32);
+                let frequency = log_f.exp();
+                let db = filter.magnitude_db(frequency, sample_rate as f32);
+                curve_points.push((frequency.log10() as f64, db as f64));
+            }
 
-    for filter in &eq_state.local_filters {
-        let mut curve_points = Vec::with_capacity(width);
+            curve_points
+        })
+        .collect();
 
-        // Generate points across the frequency spectrum for this single filter
-        let start_freq: f32 = 20.0;
-        let end_freq: f32 = 20000.0;
-        let log_start = start_freq.ln();
-        let log_end = end_freq.ln();
-        let step = (log_end - log_start) / ((width as f32) - 1.0);
-
-        for i in 0..width {
-            let log_f = log_start + step * (i as f32);
-            let f = log_f.exp();
-            // Get magnitude of just this filter (no master gain)
-            let db = filter.magnitude_db(f, sample_rate as f32);
-            curve_points.push((f.log10() as f64, db as f64));
-        }
-
-        filter_curves.push(curve_points);
-    }
-
-    // Create filter center points for visualization (also in log scale)
     let filter_points: Vec<(f64, f64)> = eq_state
         .local_filters
         .iter()
         .map(|filter| {
-            // Calculate the total response at the filter's center frequency
-            // local_master_gain is already in dB, so use it directly
             let mut total_db = eq_state.local_master_gain;
             for flt in &eq_state.local_filters {
                 total_db += flt.magnitude_db(filter.freq, sample_rate as f32);
@@ -852,31 +847,6 @@ fn draw_eq_graph(
         })
         .collect();
 
-    let datasets = vec![
-        Dataset::default()
-            .name("Response")
-            .marker(symbols::Marker::Braille)
-            .graph_type(GraphType::Line)
-            .style(Style::default().fg(Color::Cyan))
-            .data(&data_points),
-        Dataset::default()
-            .name("Filters")
-            .marker(symbols::Marker::Dot)
-            .graph_type(GraphType::Scatter)
-            .style(Style::default().fg(Color::Yellow))
-            .data(&filter_points),
-    ];
-
-    // Labels must be evenly spaced in log scale for proper alignment
-    // 20 → 200 → 2000 → 20000 (each is 10x, so 1.0 apart in log10)
-    let x_labels = vec![
-        Span::styled("20", Style::default().fg(Color::Gray)),
-        Span::styled("200", Style::default().fg(Color::Gray)),
-        Span::styled("2k", Style::default().fg(Color::Gray)),
-        Span::styled("20k", Style::default().fg(Color::Gray)),
-    ];
-
-    // Determine border style based on focus
     let is_focused = eq_focus == EqFocus::CurvePanel;
     let border_style = if is_focused {
         Style::default()
@@ -886,27 +856,165 @@ fn draw_eq_graph(
         Style::default().fg(Color::DarkGray)
     };
 
-    let chart = Chart::new(datasets)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(border_style)
-                .title(" Frequency Response (↑↓ Gain) "),
-        )
-        .x_axis(
-            Axis::default()
-                .title("Freq (Hz)")
-                .bounds([(20.0_f64).log10(), (20000.0_f64).log10()]) // ~1.3 to ~4.3
-                .labels(x_labels),
-        )
-        .y_axis(
-            Axis::default()
-                .title("Gain (dB)")
-                .bounds([-18.0, 18.0])
-                .labels(vec![Span::raw("-18"), Span::raw("0"), Span::raw("+18")]),
-        );
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(format!(
+            " Frequency Response (↑↓ Gain) • Master {} ",
+            eq_state.master_gain_label()
+        ));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
 
-    f.render_widget(chart, area);
+    if inner.width < 8 || inner.height < 3 {
+        return;
+    }
+
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(4), Constraint::Min(4)])
+        .split(inner);
+    let graph_rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(2), Constraint::Length(1)])
+        .split(columns[1]);
+    let y_axis_area = Rect::new(
+        columns[0].x,
+        columns[0].y,
+        columns[0].width,
+        graph_rows[0].height,
+    );
+    let plot_area = graph_rows[0];
+    let x_axis_area = graph_rows[1];
+
+    draw_y_axis_labels(f, y_axis_area);
+    draw_x_axis_labels(f, x_axis_area);
+
+    let min_frequency_log = 20.0_f64.log10();
+    let max_frequency_log = 20000.0_f64.log10();
+    let canvas = Canvas::default()
+        .marker(symbols::Marker::Braille)
+        .x_bounds([min_frequency_log, max_frequency_log])
+        .y_bounds([MIN_GAIN_DB, MAX_GAIN_DB])
+        .paint(|ctx| {
+            // Log-frequency and gain grid.
+            for frequency in [
+                20.0_f64, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0, 20000.0,
+            ] {
+                let x = frequency.log10();
+                ctx.draw(&CanvasLine::new(
+                    x,
+                    MIN_GAIN_DB,
+                    x,
+                    MAX_GAIN_DB,
+                    Color::DarkGray,
+                ));
+            }
+            for gain in [-12.0_f64, -6.0, 6.0, 12.0] {
+                ctx.draw(&CanvasLine::new(
+                    min_frequency_log,
+                    gain,
+                    max_frequency_log,
+                    gain,
+                    Color::DarkGray,
+                ));
+            }
+            ctx.draw(&CanvasLine::new(
+                min_frequency_log,
+                0.0,
+                max_frequency_log,
+                0.0,
+                Color::Gray,
+            ));
+            ctx.layer();
+
+            // Draw each band's response so its contribution to the master curve is visible.
+            for (index, curve) in filter_curves.iter().enumerate() {
+                let color = if index == eq_selected_band {
+                    Color::Magenta
+                } else {
+                    Color::Blue
+                };
+                draw_canvas_curve(ctx, curve, color);
+            }
+            ctx.layer();
+
+            draw_canvas_curve(ctx, &data_points, Color::Cyan);
+            ctx.layer();
+
+            // Cross-shaped handles stay visible at each band's center frequency.
+            for (index, &(x, y)) in filter_points.iter().enumerate() {
+                let (color, half_width, half_height) = if index == eq_selected_band {
+                    (Color::Yellow, 0.025, 1.0)
+                } else {
+                    (Color::White, 0.015, 0.7)
+                };
+                ctx.draw(&CanvasLine::new(
+                    x - half_width,
+                    y,
+                    x + half_width,
+                    y,
+                    color,
+                ));
+                ctx.draw(&CanvasLine::new(
+                    x,
+                    y - half_height,
+                    x,
+                    y + half_height,
+                    color,
+                ));
+                ctx.draw(&Points::new(&[(x, y)], color));
+            }
+        });
+
+    f.render_widget(canvas, plot_area);
+}
+
+fn draw_canvas_curve(ctx: &mut CanvasContext<'_>, points: &[(f64, f64)], color: Color) {
+    for pair in points.windows(2) {
+        let [(x1, y1), (x2, y2)] = pair else {
+            continue;
+        };
+        if x1.is_finite() && y1.is_finite() && x2.is_finite() && y2.is_finite() {
+            ctx.draw(&CanvasLine::new(*x1, *y1, *x2, *y2, color));
+        }
+    }
+}
+
+fn draw_y_axis_labels(f: &mut Frame, area: Rect) {
+    for (y, label) in [
+        (area.top(), "+18"),
+        (area.top() + area.height / 2, "0"),
+        (area.bottom().saturating_sub(1), "-18"),
+    ] {
+        f.render_widget(
+            Paragraph::new(label)
+                .alignment(Alignment::Right)
+                .style(Style::default().fg(Color::Gray)),
+            Rect::new(area.x, y, area.width.saturating_sub(1), 1),
+        );
+    }
+}
+
+fn draw_x_axis_labels(f: &mut Frame, area: Rect) {
+    let labels = [
+        (0.0_f64, "20"),
+        (1.0 / 3.0, "200"),
+        (2.0 / 3.0, "2k"),
+        (1.0, "20k"),
+    ];
+
+    for (position, label) in labels {
+        let label_width = label.chars().count() as u16;
+        let center = area.x + ((area.width.saturating_sub(1) as f64 * position).round() as u16);
+        let x = center
+            .saturating_sub(label_width / 2)
+            .clamp(area.x, area.right().saturating_sub(label_width));
+        f.render_widget(
+            Paragraph::new(label).style(Style::default().fg(Color::Gray)),
+            Rect::new(x, area.y, label_width, 1),
+        );
+    }
 }
 
 fn draw_filter_band_config_modal(
@@ -923,13 +1031,6 @@ fn draw_filter_band_config_modal(
 
     let title = format!(" Band {} Configuration ", config.selected_band + 1);
     let selected_param = config.selected_param;
-
-    // Convert order to slope description (order * 6 dB/oct)
-    // let slope_label = format!(
-    //     "{} dB/oct (order {})",
-    //     filter.order as u16 * 6,
-    //     filter.order
-    // );
 
     let params: Vec<(&str, String, Color)> = vec![
         ("Type", format!("{}", filter.filter_type), Color::Cyan),
@@ -1027,4 +1128,43 @@ fn draw_filter_band_config_modal(
 
     let paragraph = Paragraph::new(text).block(block);
     f.render_widget(paragraph, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    use super::*;
+
+    #[test]
+    fn advanced_eq_renders_canvas_and_master_gain() {
+        let mut eq_state = EqState::new();
+        eq_state.eq_mode = EqMode::Advanced;
+        eq_state.local_master_gain = 3.5;
+        let audio_state = AudioState::new();
+        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+
+        terminal
+            .draw(|frame| {
+                draw_eq_panel(
+                    frame,
+                    frame.area(),
+                    &eq_state,
+                    &audio_state,
+                    EqFocus::CurvePanel,
+                    0,
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let rendered: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
+
+        assert!(rendered.contains("Master +3.5 dB"));
+        assert!(buffer.content().iter().any(|cell| {
+            cell.symbol()
+                .chars()
+                .any(|symbol| ('\u{2800}'..='\u{28ff}').contains(&symbol))
+        }));
+    }
 }

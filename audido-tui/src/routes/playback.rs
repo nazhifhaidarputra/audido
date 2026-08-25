@@ -10,7 +10,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Bar, BarChart, BarGroup, Block, Borders, Gauge, Paragraph},
+    widgets::{Bar, BarChart, BarGroup, Block, Borders, Paragraph},
 };
 
 use crate::{

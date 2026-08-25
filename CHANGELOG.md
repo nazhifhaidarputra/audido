@@ -1,11 +1,25 @@
-# CHANGELOG v0.1.1
+# Changelog
 
-- Add Youtube Playback
+## [Unreleased]
 
-# TODO
+## [0.1.2] - 2026-08-24
+
+- Add dynamic Handling
+
+**TODO**
 
 - FIX Song Key detection
 - Add tempo detector
 - Add time-stretcher and pitch shifter
 - Add audio normalization
-- Add integration with youtube player via youtube-dl
+
+## [0.1.1]
+
+- Add Youtube Playback
+
+**TODO**
+
+- FIX Song Key detection
+- Add tempo detector
+- Add time-stretcher and pitch shifter
+- Add audio normalization

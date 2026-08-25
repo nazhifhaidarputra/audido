@@ -1,6 +1,5 @@
 use std::fs::canonicalize;
 use std::io::IsTerminal;
-#[cfg(target_os = "linux")]
 use std::process::Command;
 use std::time::Duration;
 use std::{io, path::PathBuf};
@@ -34,9 +33,14 @@ use crate::router::InterceptKeyResult;
 use crate::routes::playback::PlaybackRoute;
 
 fn main() -> anyhow::Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if matches!(args.as_slice(), [argument] if argument == "--version" || argument == "-V") {
+        println!("audido-tui {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     if !std::io::stdout().is_terminal() {
         let exe = std::env::current_exe()?;
-        let args: Vec<String> = std::env::args().skip(1).collect();
 
         #[cfg(target_os = "windows")]
         Command::new("cmd")
@@ -95,9 +99,6 @@ fn main() -> anyhow::Result<()> {
     logger::setup_logging()?;
 
     log::info!("Starting Audido TUI");
-
-    // Get audio file paths from command line args
-    let args: Vec<String> = std::env::args().skip(1).collect();
 
     // Initialise the new CPAL-based audio core
     let handle = audido_core::modules::core::init()?;

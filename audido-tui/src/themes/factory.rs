@@ -2,30 +2,24 @@ use std::sync::OnceLock;
 
 use ratatui::style::Color;
 
-use crate::themes::{AppTheme, CoverArt, utils::image_to_ascii_paragraph};
+use crate::themes::{AppTheme, CoverArt, CoverArtRenderMode, ImageSource};
 
 impl AppTheme {
     pub fn hatsune_miku() -> Self {
         static THEME: OnceLock<AppTheme> = OnceLock::new();
         THEME
             .get_or_init(|| {
-                // Include bytes relative to the cargo manifest directory (audido-tui)
-                let bytes = include_bytes!(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/../assets/images/hatsune_miku.png"
-                ));
-                let img =
-                    image::load_from_memory(bytes).expect("Failed to load embedded Miku image");
+                let source = ImageSource::Url(
+                    "https://i.pinimg.com/736x/fc/23/21/fc2321ef283919ba216701482815a6c1.jpg",
+                );
 
-                // Constrain ASCII size to 50 width and 14 height to match the UI block
-                let ascii_art = image_to_ascii_paragraph(&img, 30, 14);
-
-                Self {
-                    name: "Hatsune Miku",
-                    foreground_color: Color::Rgb(57, 197, 187),
-                    font_color: Color::Rgb(57, 197, 187),
-                    default_cover: CoverArt::AsciiArt(ascii_art),
-                }
+                Self::from_image_source(
+                    "Hatsune Miku",
+                    Color::Rgb(57, 197, 187),
+                    Color::Rgb(57, 197, 187),
+                    source,
+                    CoverArtRenderMode::Ascii,
+                )
             })
             .clone()
     }
@@ -34,22 +28,41 @@ impl AppTheme {
         static THEME: OnceLock<AppTheme> = OnceLock::new();
         THEME
             .get_or_init(|| {
-                let bytes = include_bytes!(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/../assets/images/kasane_teto.png"
-                ));
-                let img =
-                    image::load_from_memory(bytes).expect("Failed to load embedded Teto image");
-                let ascii_art = image_to_ascii_paragraph(&img, 30, 14);
+                let source = ImageSource::Url(
+                    "https://i.pinimg.com/736x/b1/9a/07/b19a073ce8652e616624404b0e1c6b71.jpg"
+                );
 
-                Self {
-                    name: "Kasane Teto",
-                    foreground_color: Color::Rgb(212, 66, 114),
-                    font_color: Color::Rgb(212, 66, 114),
-                    default_cover: CoverArt::AsciiArt(ascii_art),
-                }
+                Self::from_image_source(
+                    "Kasane Teto",
+                    Color::Rgb(212, 66, 114),
+                    Color::Rgb(212, 66, 114),
+                    source,
+                    CoverArtRenderMode::Ascii,
+                )
             })
             .clone()
+    }
+
+    /// Build a theme whose default cover can come from bytes, a file, a URL,
+    /// or an already-decoded image.
+    pub fn from_image_source(
+        name: &'static str,
+        foreground_color: Color,
+        font_color: Color,
+        source: ImageSource<'_>,
+        render_mode: CoverArtRenderMode,
+    ) -> Self {
+        let default_cover = CoverArt::from_source(source, render_mode).unwrap_or_else(|error| {
+            log::warn!("Unable to load cover for theme {name}: {error:#}");
+            CoverArt::none()
+        });
+
+        Self {
+            name,
+            foreground_color,
+            font_color,
+            default_cover,
+        }
     }
 
     pub fn default_theme() -> Self {
@@ -57,7 +70,7 @@ impl AppTheme {
             name: "Default",
             foreground_color: Color::Cyan,
             font_color: Color::Cyan,
-            default_cover: CoverArt::None,
+            default_cover: CoverArt::none(),
         }
     }
 
@@ -75,18 +88,18 @@ impl AppTheme {
     pub fn current_index(name: &str) -> usize {
         Self::all_themes()
             .iter()
-            .position(|t| t.name == name)
+            .position(|theme| theme.name == name)
             .unwrap_or(0)
     }
 
     /// Returns the next theme after the one with the given name, cycling around.
     pub fn next_theme(current_name: &str) -> AppTheme {
         let themes = Self::all_themes();
-        let idx = themes
+        let index = themes
             .iter()
-            .position(|t| t.name == current_name)
+            .position(|theme| theme.name == current_name)
             .unwrap_or(0);
-        let next_idx = (idx + 1) % themes.len();
-        themes.into_iter().nth(next_idx).unwrap()
+        let next_index = (index + 1) % themes.len();
+        themes.into_iter().nth(next_index).unwrap()
     }
 }

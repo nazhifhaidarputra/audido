@@ -50,7 +50,8 @@ impl RouteHandler for SettingsRoute {
                     }
                     Some(SettingsOption::Theme) => {
                         // Cycle to the next theme
-                        state.theme = AppTheme::next_theme(state.theme.name);
+                        let theme = AppTheme::next_theme(state.theme.name);
+                        state.set_theme(theme);
                     }
                     _ => {}
                 }

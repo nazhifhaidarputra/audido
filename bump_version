@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Usage: ./bump_version vMAJOR.MINOR.PATCH
+
+Examples:
+  ./bump_version v0.1.2
+  ./bump_version 1.0.0
+
+The command updates the Cargo workspace version, refreshes Cargo.lock,
+and moves the current Unreleased changelog entries under the new version.
+It does not create a commit or Git tag.
+EOF
+}
+
+if [[ $# -eq 1 && ( $1 == "-h" || $1 == "--help" ) ]]; then
+    usage
+    exit 0
+fi
+
+if [[ $# -ne 1 ]]; then
+    usage >&2
+    exit 2
+fi
+
+requested_version=$1
+version=${requested_version#v}
+
+if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+    echo "Invalid version '$requested_version'; expected a value such as v0.1.2." >&2
+    exit 2
+fi
+
+command -v cargo >/dev/null 2>&1 || {
+    echo "cargo is required to refresh and verify the workspace." >&2
+    exit 1
+}
+command -v python3 >/dev/null 2>&1 || {
+    echo "python3 is required to update the version files safely." >&2
+    exit 1
+}
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+cd "$script_dir"
+
+for required_file in Cargo.toml Cargo.lock CHANGELOG.md; do
+    if [[ ! -f $required_file ]]; then
+        echo "Missing required file: $script_dir/$required_file" >&2
+        exit 1
+    fi
+done
+
+current_version=$(python3 - <<'PY'
+from pathlib import Path
+import re
+
+text = Path("Cargo.toml").read_text(encoding="utf-8")
+section = None
+for line in text.splitlines():
+    stripped = line.strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        section = stripped
+    elif section == "[workspace.package]":
+        match = re.fullmatch(r'version\s*=\s*"([^"]+)"', stripped)
+        if match:
+            print(match.group(1))
+            break
+else:
+    raise SystemExit("Cargo.toml has no [workspace.package] version")
+PY
+)
+
+if [[ $current_version == "$version" ]]; then
+    echo "Workspace is already at version $version." >&2
+    exit 1
+fi
+
+backup_dir=$(mktemp -d "${TMPDIR:-/tmp}/audido-version.XXXXXX")
+cp Cargo.toml Cargo.lock CHANGELOG.md "$backup_dir/"
+
+restore_on_error() {
+    status=$?
+    if [[ $status -ne 0 ]]; then
+        cp "$backup_dir/Cargo.toml" Cargo.toml
+        cp "$backup_dir/Cargo.lock" Cargo.lock
+        cp "$backup_dir/CHANGELOG.md" CHANGELOG.md
+        echo "Version bump failed; restored Cargo.toml, Cargo.lock, and CHANGELOG.md." >&2
+    fi
+    rm -rf -- "$backup_dir"
+    exit "$status"
+}
+trap restore_on_error EXIT
+trap 'exit 1' HUP INT TERM
+
+python3 - "$version" "$(date -u +%Y-%m-%d)" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+version, release_date = sys.argv[1:]
+
+manifest_path = Path("Cargo.toml")
+manifest_lines = manifest_path.read_text(encoding="utf-8").splitlines(keepends=True)
+section = None
+updated = False
+for index, line in enumerate(manifest_lines):
+    stripped = line.strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        section = stripped
+    elif section == "[workspace.package]" and re.fullmatch(
+        r'version\s*=\s*"[^"]+"', stripped
+    ):
+        newline = "\n" if line.endswith("\n") else ""
+        manifest_lines[index] = f'version = "{version}"{newline}'
+        updated = True
+        break
+
+if not updated:
+    raise SystemExit("Cargo.toml has no [workspace.package] version")
+
+changelog_path = Path("CHANGELOG.md")
+changelog = changelog_path.read_text(encoding="utf-8")
+unreleased = "## [Unreleased]"
+release_heading = f"## [{version}]"
+if unreleased not in changelog:
+    raise SystemExit("CHANGELOG.md has no [Unreleased] heading")
+if release_heading in changelog:
+    raise SystemExit(f"CHANGELOG.md already contains version {version}")
+
+changelog = changelog.replace(
+    unreleased,
+    f"{unreleased}\n\n{release_heading} - {release_date}",
+    1,
+)
+
+manifest_path.write_text("".join(manifest_lines), encoding="utf-8")
+changelog_path.write_text(changelog, encoding="utf-8")
+PY
+
+# Cargo updates local workspace package versions in Cargo.lock as part of a
+# normal build. The existing lockfile keeps dependency versions pinned.
+RUSTC_WRAPPER=${RUSTC_WRAPPER:-} cargo check --workspace --quiet
+
+cargo metadata --no-deps --format-version 1 \
+    | python3 -c '
+import json
+import sys
+
+expected = sys.argv[1]
+metadata = json.load(sys.stdin)
+workspace_members = set(metadata["workspace_members"])
+packages = [package for package in metadata["packages"] if package["id"] in workspace_members]
+mismatches = [
+    "{}={}".format(package["name"], package["version"])
+    for package in packages
+    if package["version"] != expected
+]
+if mismatches:
+    raise SystemExit("Workspace version mismatch: " + ", ".join(mismatches))
+' "$version"
+
+trap - EXIT HUP INT TERM
+rm -rf -- "$backup_dir"
+
+echo "Bumped Audido from $current_version to $version."
+echo
+echo "Next steps:"
+echo "  git add Cargo.toml Cargo.lock CHANGELOG.md"
+echo "  git commit -m 'Release v$version'"
+echo "  git tag v$version"
+echo "  git push origin HEAD v$version"

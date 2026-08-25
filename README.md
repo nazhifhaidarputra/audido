@@ -43,7 +43,7 @@ tagged source release locally. You can request that explicitly:
 
 ```bash
 ./install.sh --from-source
-./install.sh --version 0.1.1 --prefix /opt/audido
+./install.sh --version 1.2.3 --prefix /opt/audido
 ```
 
 For macOS YouTube playback, install the external tools with Homebrew:
@@ -142,9 +142,14 @@ Pushing a tag matching the workspace version runs the complete packaging and
 GitHub Release pipeline:
 
 ```bash
-# First update version under [workspace.package] in Cargo.toml.
-git tag v0.1.1
-git push origin v0.1.1
+# Update Cargo.toml, Cargo.lock, and CHANGELOG.md together.
+./bump_version v1.2.3
+
+# Review and commit the release, then create the matching tag.
+git add Cargo.toml Cargo.lock CHANGELOG.md
+git commit -m "Release v1.2.3"
+git tag v1.2.3
+git push origin HEAD v1.2.3
 ```
 
 The release workflow also supports manual dispatch for an existing tag. It

@@ -3,7 +3,7 @@
 
 #define MyAppName "Audido"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.1"
+  #error MyAppVersion must be provided by the build command
 #endif
 #ifndef MyOutputDir
   #define MyOutputDir "..\target\release"

@@ -96,7 +96,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(picker: Picker) -> Self {
-        Self {
+        let mut state = Self {
             audio: AudioState::new(),
             browser: BrowserState::new(),
             queue: QueueState::new(),
@@ -105,6 +105,23 @@ impl AppState {
             normalizer: NormalizerState::new(),
             theme: AppTheme::default_theme(),
             picker,
+        };
+        state.prepare_theme_cover();
+        state
+    }
+
+    /// Replace the active theme and prepare its image for the current terminal.
+    pub fn set_theme(&mut self, theme: AppTheme) {
+        self.theme = theme;
+        self.prepare_theme_cover();
+    }
+
+    fn prepare_theme_cover(&mut self) {
+        if let Err(error) = self.theme.default_cover.prepare(&self.picker) {
+            log::warn!(
+                "Unable to prepare cover for theme {}: {error:#}",
+                self.theme.name
+            );
         }
     }
 

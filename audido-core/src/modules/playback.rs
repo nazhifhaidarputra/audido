@@ -209,6 +209,10 @@ pub(crate) async fn play_queue_index_inner(ctx: Arc<CoreContext>, index: usize) 
         eq.preset = prev_preset;
         eq.parameters_changed();
     }
+    ctx.normalizer_shadow
+        .lock()
+        .expect("normalizer_shadow poisoned")
+        .set_format(metadata.sample_rate, metadata.num_channels);
 
     *ctx.current_audio.lock().expect("current_audio poisoned") = Some(audio_data);
 
@@ -255,6 +259,7 @@ fn run_dsp_feed_loop(ctx: Arc<CoreContext>, rt_rx: crossbeam_channel::Receiver<R
                 }
                 RealtimeCommand::SeekToFrame(frame) => {
                     ctx.atomics.position_samples.store(frame, Ordering::Release);
+                    norm_node.instance.reset_measurement();
                 }
                 RealtimeCommand::UpdateEqFilter(idx, filter) => {
                     eq_node.set_filter(idx, filter);
@@ -287,6 +292,9 @@ fn run_dsp_feed_loop(ctx: Arc<CoreContext>, rt_rx: crossbeam_channel::Receiver<R
                     norm_node.instance.set_headroom(hr);
                 }
                 RealtimeCommand::SetNormalizerEnabled(on) => {
+                    if on != norm_node.on {
+                        norm_node.instance.reset_measurement();
+                    }
                     norm_node.on = on;
                 }
             }
@@ -311,7 +319,14 @@ fn run_dsp_feed_loop(ctx: Arc<CoreContext>, rt_rx: crossbeam_channel::Receiver<R
                 if pos >= samples.len() {
                     break; // end of track
                 }
-                let end = (pos + CHUNK_SIZE).min(samples.len());
+                let channels = ctx.atomics.num_channels.load(Ordering::Relaxed).max(1) as usize;
+                let available = samples.len() - pos;
+                let chunk_len = CHUNK_SIZE.min(available);
+                let complete_len = chunk_len - chunk_len % channels;
+                if complete_len == 0 {
+                    break;
+                }
+                let end = pos + complete_len;
                 chunk.extend_from_slice(&samples[pos..end]);
             }
             crate::source::AudioBuffer::Stream(samples) => {

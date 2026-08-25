@@ -167,6 +167,7 @@ fn run_tui(mut handle: CoreHandle, initial_files: Vec<String>) -> anyhow::Result
         // Draw UI
         // Drain the spectrum ring buffer first so the visualizer has fresh data.
         state.audio.visualizer_config.update();
+        state.normalizer.refresh_meter(&handle);
         terminal.draw(|f| ui::draw(f, &state, &mut router))?;
 
         // Handle input

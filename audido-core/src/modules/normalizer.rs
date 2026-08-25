@@ -6,6 +6,23 @@ use crate::{
     commands::RealtimeCommand, dsp::normalization::NormalizationMode, modules::core::CoreContext,
 };
 
+#[derive(Debug, Clone, Copy)]
+pub struct NormalizerMeter {
+    pub current_gain_db: f32,
+    pub measured_level: f32,
+}
+
+pub fn meter(ctx: &CoreContext) -> NormalizerMeter {
+    let normalizer = ctx
+        .normalizer_shadow
+        .lock()
+        .expect("normalizer_shadow poisoned");
+    NormalizerMeter {
+        current_gain_db: normalizer.current_gain_db(),
+        measured_level: normalizer.last_measured_level(),
+    }
+}
+
 fn send_rt(ctx: &CoreContext, cmd: RealtimeCommand) {
     if let Some(tx) = ctx.rt_cmd_tx.lock().expect("rt_cmd_tx poisoned").as_ref() {
         let _ = tx.send(cmd);
@@ -42,7 +59,7 @@ pub fn set_target_level(ctx: Arc<CoreContext>, level: f32) {
             .expect("normalizer_shadow poisoned")
             .set_target_level(level);
         send_rt(&ctx, RealtimeCommand::SetNormalizerTargetLevel(level));
-        log::info!("Normalizer target: {:.2} dBFS", level);
+        log::info!("Normalizer target: {:.2}", level);
     });
 }
 

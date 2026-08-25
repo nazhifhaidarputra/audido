@@ -14,7 +14,7 @@ use ratatui::{
 
 use crate::{
     router::{RouteAction, RouteHandler},
-    routes::eq::EqualizerRoute,
+    routes::{eq::EqualizerRoute, normalization::NormalizationRoute},
     state::AppState,
     states::SettingsOption,
     themes::AppTheme,
@@ -33,7 +33,7 @@ impl RouteHandler for SettingsRoute {
         &mut self,
         key: KeyCode,
         state: &mut AppState,
-        __handle: &CoreHandle,
+        _handle: &CoreHandle,
     ) -> anyhow::Result<RouteAction> {
         match key {
             KeyCode::Up => state.settings.prev_item(),
@@ -47,6 +47,9 @@ impl RouteHandler for SettingsRoute {
                 match selected {
                     Some(SettingsOption::Equalizer) => {
                         return Ok(RouteAction::Push(Box::new(EqualizerRoute::default())));
+                    }
+                    Some(SettingsOption::Normalize) => {
+                        return Ok(RouteAction::Push(Box::new(NormalizationRoute::default())));
                     }
                     Some(SettingsOption::Theme) => {
                         // Cycle to the next theme

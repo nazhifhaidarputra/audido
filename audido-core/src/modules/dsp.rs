@@ -35,7 +35,6 @@ pub fn set_master_gain(ctx: Arc<CoreContext>, gain_db: f32) {
             .expect("eq_shadow poisoned")
             .master_gain = linear;
         send_rt(&ctx, RealtimeCommand::SetEqMasterGain(linear));
-        log::info!("EQ master gain: {:.2} dB", gain_db);
     });
 }
 
@@ -48,7 +47,6 @@ pub fn set_preset(ctx: Arc<CoreContext>, preset: EqPreset) {
             eq.parameters_changed();
         }
         send_rt(&ctx, RealtimeCommand::SetEqPreset(preset));
-        log::info!("EQ preset: {:?}", preset);
     });
 }
 
@@ -61,7 +59,6 @@ pub fn set_filters(ctx: Arc<CoreContext>, filters: Vec<FilterNode>) {
             eq.parameters_changed();
         }
         send_rt(&ctx, RealtimeCommand::SetAllEqFilters(filters));
-        log::info!("EQ filters updated.");
     });
 }
 

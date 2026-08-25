@@ -5,7 +5,7 @@
 ![license](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)
 ![rust](https://img.shields.io/badge/rust-stable-orange.svg)
 
-Audido is a terminal-based audio player (TUI) written in Rust. It provides a local audio player, queue management, and a foundation for DSP-based audio processing.
+Audido is a terminal-based audio player (TUI) written in Rust. It provides a local audio player and youtube audio player, queue management, and real-time DSP for the playback.
 
 **Key Features**
 - Local audio playback

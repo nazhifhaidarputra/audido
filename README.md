@@ -5,12 +5,30 @@
 ![license](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)
 ![rust](https://img.shields.io/badge/rust-stable-orange.svg)
 
+<p align="center">
+  <a href="docs/images/Audido-doc_1.png">
+    <img src="docs/images/Audido-doc_1.png" width="19%" alt="Player">
+  </a>
+  <a href="docs/images/Audido-doc_2.png">
+    <img src="docs/images/Audido-doc_2.png" width="19%" alt="Files">
+  </a>
+  <a href="docs/images/Audido_doc-3.png">
+    <img src="docs/images/Audido_doc-3.png" width="19%" alt="Queue">
+  </a>
+  <a href="docs/images/Audido-doc_4.png">
+    <img src="docs/images/Audido-doc_4.png" width="19%" alt="Equalizer">
+  </a>
+  <a href="docs/images/Audido-doc_5.png">
+    <img src="docs/images/Audido-doc_5.png" width="19%" alt="YouTube">
+  </a>
+</p>
+
 Audido is a terminal-based audio player (TUI) written in Rust. It provides a local audio player and youtube audio player, queue management, and real-time DSP for the playback.
 
 **Key Features**
-- Local audio playback
+- Local and youtube stream audio playback
 - Queue management
-- Browse local files from the TUI
+- Browse local files and youtube search from the TUI
 - Extensible DSP pipeline (EQ, normalization, pitch shifting, etc.). Only EQ is now available
 
 ## Install
@@ -173,4 +191,4 @@ Contributions welcome — please open issues or PRs. For large changes, open an 
 
 ## License
 
-This project is licensed under GPL-3.0-or-later — see the [LICENSE](LICENSE) file for details.
+This project is licensed under GPL-3.0 License — see the [LICENSE](LICENSE) file for details.
